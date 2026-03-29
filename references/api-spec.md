@@ -110,6 +110,37 @@ Pushes a status event from the hook. Called automatically by the hook handler â€
 
 ---
 
+## POST /api/claw/activity
+
+Pushes a semantic activity summary from the plugin.
+
+**Auth:** `Authorization: Bearer <device_token from config.json>`
+
+**Request:**
+```json
+{
+  "instance_id": "<instance_id from config.json>",
+  "lobster_id": "<lobster_id from config.json>",
+  "activity_at": "2026-03-29T12:00:00.000Z",
+  "activity_id": "<deterministic activity id>",
+  "session_key_hash": "<16-char hex>",
+  "kind": "coding",
+  "summary": "Working on plugin activity summary integration"
+}
+```
+
+- `instance_id` (optional): Source Claw instance id.
+- `activity_id` (required): Client-generated id used to build `activityKey` with `activity_at`.
+- `kind` (required): `coding | writing | researching | planning | communicating | other`.
+- `summary` (required): Human-readable activity text.
+
+**Response 202:**
+```json
+{ "ok": true }
+```
+
+---
+
 ## Notes
 
 - The `device_token` is written to `~/.openclaw/clawworld/config.json` by `bind.sh` and must never be logged or included in agent responses.

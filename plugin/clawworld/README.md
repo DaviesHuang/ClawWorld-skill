@@ -5,7 +5,10 @@
 - 监听 `api.runtime.events.onSessionTranscriptUpdate(...)`
 - 收到更新后读取该 `sessionKey` 最近消息
 - 调 embedded Pi agent 生成 activity summary
-- 把 summary 写到 OpenClaw workspace 下的 `logs/clawworld-activity-summary-test.jsonl`
+- 从 `~/.openclaw/clawworld/config.json` 读取 ClawWorld 配置
+- 调用 `POST /api/claw/activity` 上报 activity
+- 使用单独的 ClawWorld logger helper 输出插件日志
+- 把结果写到 OpenClaw workspace 下的 `logs/clawworld-activity-summary-test.jsonl`
 
 ## 文件
 
@@ -15,10 +18,13 @@
 
 ## 当前行为
 
-每次 transcript 更新时，插件会打印：
+每次 transcript 更新时，插件会：
 
-1. update 本身的 `sessionKey` / `sessionFile` / `messageId`
-2. 最近 6 条消息中的最后 3 条预览
+1. 读取最近 session messages
+2. 生成 summary
+3. 生成 `activity_id`
+4. 调用 `/api/claw/activity`
+5. 把本地结果写入日志文件
 
 ## 预期用途
 

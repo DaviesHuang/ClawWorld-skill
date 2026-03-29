@@ -1,13 +1,22 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { createClawWorldLogger } from "./clawworld-logger";
 
 type TranscriptUpdate = {
   sessionFile: string;
   sessionKey?: string;
   message?: unknown;
   messageId?: string;
+};
+
+type ClawWorldConfig = {
+  deviceToken: string;
+  lobsterId: string;
+  instanceId: string;
+  endpoint: string;
 };
 
 type SessionEntryLike = {
@@ -175,6 +184,87 @@ function resolveAuthProfile(entry?: SessionEntryLike): {
   };
 }
 
+function hashSessionKey(sessionKey: string): string {
+  return crypto.createHash("sha256").update(sessionKey).digest("hex").slice(0, 16);
+}
+
+function buildActivityId(params: {
+  lobsterId: string;
+  activityAt: string;
+  sessionKeyHash: string;
+  kind: string;
+  summary: string;
+}): string {
+  const raw = [
+    params.lobsterId,
+    params.activityAt,
+    params.sessionKeyHash,
+    params.kind,
+    params.summary,
+  ].join("|");
+  return crypto.createHash("sha256").update(raw).digest("hex").slice(0, 32);
+}
+
+async function loadClawWorldConfig(): Promise<ClawWorldConfig | null> {
+  const configFile = path.join(os.homedir(), ".openclaw", "clawworld", "config.json");
+  try {
+    const raw = await fs.readFile(configFile, "utf8");
+    const parsed = JSON.parse(raw) as Partial<ClawWorldConfig>;
+    if (
+      typeof parsed.deviceToken !== "string" ||
+      !parsed.deviceToken.trim() ||
+      typeof parsed.lobsterId !== "string" ||
+      !parsed.lobsterId.trim() ||
+      typeof parsed.instanceId !== "string" ||
+      !parsed.instanceId.trim() ||
+      typeof parsed.endpoint !== "string" ||
+      !parsed.endpoint.trim()
+    ) {
+      return null;
+    }
+    return {
+      deviceToken: parsed.deviceToken.trim(),
+      lobsterId: parsed.lobsterId.trim(),
+      instanceId: parsed.instanceId.trim(),
+      endpoint: parsed.endpoint.trim().replace(/\/+$/, ""),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function postActivity(params: {
+  config: ClawWorldConfig;
+  activityAt: string;
+  activityId: string;
+  sessionKeyHash: string;
+  kind: string;
+  summary: string;
+}): Promise<void> {
+  const response = await fetch(`${params.config.endpoint}/api/claw/activity`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${params.config.deviceToken}`,
+    },
+    body: JSON.stringify({
+      instance_id: params.config.instanceId,
+      lobster_id: params.config.lobsterId,
+      activity_at: params.activityAt,
+      activity_id: params.activityId,
+      session_key_hash: params.sessionKeyHash,
+      kind: params.kind,
+      summary: params.summary,
+    }),
+    signal: AbortSignal.timeout(5_000),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`activity POST failed: ${response.status} ${text}`.trim());
+  }
+}
+
 function collectPayloadText(payloads: unknown): string {
   if (!Array.isArray(payloads)) {
     return "";
@@ -210,13 +300,11 @@ export default definePluginEntry({
   name: "ClawWorld",
   description: "ClawWorld plugin PoC that summarizes transcript updates into a workspace log.",
   register(api) {
-    const logger = api.runtime.logging.getChildLogger(
-      { plugin: "clawworld" },
-      { level: "debug" },
-    );
+    const logger = createClawWorldLogger("plugin", api.logger);
 
     let unsubscribe: (() => void) | null = null;
     let workspaceLogsDir: string | null = null;
+    let clawWorldConfig: ClawWorldConfig | null = null;
     const inFlightSessions = new Set<string>();
 
     async function resolveLogsDir(): Promise<string> {
@@ -330,17 +418,46 @@ export default definePluginEntry({
         const summary = await summarizeRecentMessages(sessionRef, messages);
         const logsDir = await resolveLogsDir();
         const outputFile = path.join(logsDir, "clawworld-activity-summary-test.jsonl");
+        const activityAt = new Date().toISOString();
+        const sessionKeyHash = hashSessionKey(sessionRef);
+        const kind = "other";
+
+        if (!clawWorldConfig) {
+          logger.info("[clawworld] skip activity POST because ClawWorld config is unavailable");
+          return;
+        }
+
+        const activityId = buildActivityId({
+          lobsterId: clawWorldConfig.lobsterId,
+          activityAt,
+          sessionKeyHash,
+          kind,
+          summary,
+        });
+
+        await postActivity({
+          config: clawWorldConfig,
+          activityAt,
+          activityId,
+          sessionKeyHash,
+          kind,
+          summary,
+        });
 
         await appendJsonlLine(outputFile, {
-          ts: new Date().toISOString(),
+          ts: activityAt,
           sessionKey: sessionRef,
           sessionFile: update.sessionFile,
           messageId: update.messageId,
           recentMessageCount: messages.length,
+          sessionKeyHash,
+          activityId,
+          kind,
           summary,
+          posted: true,
         });
 
-        logger.info(`[clawworld] summary written for ${sessionRef}: ${summary}`);
+        logger.info(`[clawworld] summary posted for ${sessionRef}: ${summary}`);
       } catch (err) {
         logger.warn(
           `[clawworld] failed to summarize recent messages for ${sessionRef}: ${err instanceof Error ? err.message : String(err)}`,
@@ -352,22 +469,28 @@ export default definePluginEntry({
 
     api.registerService({
       id: "clawworld-listener",
-      async start() {
+      async start(ctx) {
+        const serviceLogger = createClawWorldLogger("service", ctx.logger);
         if (unsubscribe) {
           return;
         }
 
         const logsDir = await resolveLogsDir();
+        clawWorldConfig = await loadClawWorldConfig();
         unsubscribe = api.runtime.events.onSessionTranscriptUpdate((update) => {
           void handleUpdate(update as TranscriptUpdate);
         });
 
-        logger.info(`[clawworld] transcript listener started; writing summaries under ${logsDir}`);
+        serviceLogger.info("transcript listener started", {
+          logsDir,
+          configLoaded: clawWorldConfig ? "yes" : "no",
+        });
       },
-      stop() {
+      stop(ctx) {
+        const serviceLogger = createClawWorldLogger("service", ctx.logger);
         unsubscribe?.();
         unsubscribe = null;
-        logger.info("[clawworld] transcript listener stopped");
+        serviceLogger.info("transcript listener stopped");
       },
     });
   },
