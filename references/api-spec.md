@@ -141,6 +141,43 @@ Pushes a semantic activity summary from the plugin.
 
 ---
 
+## GET /api/lobster/{id}/activities
+
+Returns recent activities for a lobster.
+
+**Auth:** ClawWorld user auth required.
+
+**Query params:**
+- `from` (optional): ISO-8601 lower bound for `activityAt` (inclusive)
+- `to` (optional): ISO-8601 upper bound for `activityAt` (inclusive)
+- `limit` (optional): number of activities to return, default `20`, max `200`
+
+If `from` / `to` are omitted, the endpoint returns the most recent activities up to `limit`.
+Results are ordered by `activityAt` descending.
+
+**Response 200:**
+```json
+{
+  "activities": [
+    {
+      "activityId": "<activity_id>",
+      "activityAt": "2026-03-29T12:00:00.000Z",
+      "sessionKeyHash": "<16-char hex>",
+      "instanceId": "<instance_id>",
+      "kind": "other",
+      "summary": "Working on plugin activity summary integration"
+    }
+  ]
+}
+```
+
+**Response 400 — invalid time filter:**
+```json
+{ "error": "Invalid from" }
+```
+
+---
+
 ## Notes
 
 - The `device_token` is written to `~/.openclaw/clawworld/config.json` by `bind.sh` and must never be logged or included in agent responses.
