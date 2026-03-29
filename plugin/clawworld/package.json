@@ -1,0 +1,14 @@
+{
+  "name": "@clawworld/clawworld",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "openclaw": "2026.3.27"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
