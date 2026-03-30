@@ -1,7 +1,6 @@
 {
   "name": "@clawworld/clawworld",
   "version": "0.0.1",
-  "private": true,
   "type": "module",
   "dependencies": {
     "openclaw": "2026.3.27"
@@ -9,6 +8,14 @@
   "openclaw": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "compat": {
+      "pluginApi": ">=2026.3.27",
+      "minGatewayVersion": "2026.3.27"
+    },
+    "build": {
+      "openclawVersion": "2026.3.27",
+      "pluginSdkVersion": "2026.3.27"
+    }
   }
 }
