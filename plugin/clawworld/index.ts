@@ -220,15 +220,28 @@ async function loadClawWorldConfig(): Promise<ClawWorldConfig | null> {
       typeof parsed.endpoint !== "string" ||
       !parsed.endpoint.trim()
     ) {
+      console.log(
+        `[clawworld] invalid config at ${configFile}: missing required fields (home=${os.homedir()})`,
+      );
       return null;
     }
-    return {
+
+    const config = {
       deviceToken: parsed.deviceToken.trim(),
       lobsterId: parsed.lobsterId.trim(),
       instanceId: parsed.instanceId.trim(),
       endpoint: parsed.endpoint.trim().replace(/\/+$/, ""),
     };
-  } catch {
+
+    console.log(
+      `[clawworld] loaded config from ${configFile} home=${os.homedir()} endpoint=${config.endpoint} lobsterId=${config.lobsterId} instanceId=${config.instanceId} deviceTokenPrefix=${config.deviceToken.slice(0, 8)}`,
+    );
+
+    return config;
+  } catch (err) {
+    console.log(
+      `[clawworld] failed to read config from ${configFile} home=${os.homedir()}: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
 }
@@ -296,7 +309,7 @@ async function appendJsonlLine(filePath: string, record: Record<string, unknown>
 }
 
 export default definePluginEntry({
-  id: "clawworld",
+  id: "openclaw-plugin-clawworld",
   name: "ClawWorld",
   description: "ClawWorld plugin PoC that summarizes transcript updates into a workspace log.",
   register(api) {

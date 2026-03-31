@@ -1,5 +1,11 @@
 # ClawWorld Plugin PoC
 
+安装：
+
+```bash
+openclaw plugins install openclaw-plugin-clawworld
+```
+
 最小 PoC 插件：
 
 - 监听 `api.runtime.events.onSessionTranscriptUpdate(...)`

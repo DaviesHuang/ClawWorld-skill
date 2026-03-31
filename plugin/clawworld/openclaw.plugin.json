@@ -1,5 +1,5 @@
 {
-  "id": "clawworld",
+  "id": "openclaw-plugin-clawworld",
   "name": "ClawWorld",
   "description": "ClawWorld plugin PoC for logging transcript updates and recent session messages.",
   "configSchema": {
