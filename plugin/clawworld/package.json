@@ -1,6 +1,6 @@
 {
   "name": "openclaw-plugin-clawworld",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "ClawWorld plugin for logging transcript updates and activity summaries.",
   "type": "module",
   "main": "./index.ts",
