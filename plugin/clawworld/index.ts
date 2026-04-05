@@ -19,6 +19,19 @@ type ClawWorldConfig = {
   endpoint: string;
 };
 
+type StatusPayload = {
+  instance_id: string;
+  lobster_id: string;
+  event_type: string;
+  event_action: string;
+  timestamp: string;
+  session_key_hash: string;
+  token_usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+  };
+};
+
 type SessionEntryLike = {
   modelProvider?: unknown;
   model?: unknown;
@@ -278,6 +291,26 @@ async function postActivity(params: {
   }
 }
 
+async function postStatus(params: {
+  config: ClawWorldConfig;
+  payload: StatusPayload;
+}): Promise<void> {
+  const response = await fetch(`${params.config.endpoint}/api/claw/status`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${params.config.deviceToken}`,
+    },
+    body: JSON.stringify(params.payload),
+    signal: AbortSignal.timeout(5_000),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`status POST failed: ${response.status} ${text}`.trim());
+  }
+}
+
 function collectPayloadText(payloads: unknown): string {
   if (!Array.isArray(payloads)) {
     return "";
@@ -316,9 +349,87 @@ export default definePluginEntry({
     const logger = createClawWorldLogger("plugin", api.logger);
 
     let unsubscribe: (() => void) | null = null;
-    let workspaceLogsDir: string | null = null;
-    let clawWorldConfig: ClawWorldConfig | null = null;
-    const inFlightSessions = new Set<string>();
+     let workspaceLogsDir: string | null = null;
+     let clawWorldConfig: ClawWorldConfig | null = null;
+     const inFlightSessions = new Set<string>();
+    const lastStatusPushAtBySession = new Map<string, number>();
+    const MIN_STATUS_PUSH_INTERVAL_MS = 3_000;
+
+    async function ensureClawWorldConfig(): Promise<ClawWorldConfig | null> {
+      if (clawWorldConfig) {
+        return clawWorldConfig;
+      }
+      clawWorldConfig = await loadClawWorldConfig();
+      return clawWorldConfig;
+    }
+
+    api.on("llm_output", (event, ctx) => {
+      void (async () => {
+        const usage = event.usage;
+        const sessionKey = ctx.sessionKey?.trim();
+
+        logger.debug("[clawworld] llm_output hook fired", {
+          runId: event.runId,
+          sessionId: event.sessionId,
+          sessionKey,
+          agentId: ctx.agentId,
+          provider: event.provider,
+          model: event.model,
+          usage: usage ?? null,
+          assistantTextCount: Array.isArray(event.assistantTexts) ? event.assistantTexts.length : 0,
+        });
+
+        if (!sessionKey) {
+          logger.warn("[clawworld] skip status POST because sessionKey is missing");
+          return;
+        }
+
+        if (!usage || (usage.input == null && usage.output == null)) {
+          logger.warn(`[clawworld] skip status POST because usage is empty for ${sessionKey}`);
+          return;
+        }
+
+        const config = await ensureClawWorldConfig();
+        if (!config) {
+          logger.warn("[clawworld] skip status POST because ClawWorld config is unavailable");
+          return;
+        }
+
+        const now = Date.now();
+        const lastPushAt = lastStatusPushAtBySession.get(sessionKey) ?? 0;
+        if (now - lastPushAt < MIN_STATUS_PUSH_INTERVAL_MS) {
+          logger.warn(`[clawworld] skip status POST due to throttle for ${sessionKey}`);
+          return;
+        }
+        lastStatusPushAtBySession.set(sessionKey, now);
+
+        const payload: StatusPayload = {
+          instance_id: config.instanceId,
+          lobster_id: config.lobsterId,
+          event_type: "message",
+          event_action: "sent",
+          timestamp: new Date().toISOString(),
+          session_key_hash: hashSessionKey(sessionKey),
+          token_usage: {
+            ...(usage.input != null ? { input_tokens: usage.input } : {}),
+            ...(usage.output != null ? { output_tokens: usage.output } : {}),
+          },
+        };
+
+        try {
+          await postStatus({ config, payload });
+          logger.debug(`[clawworld] status posted for ${sessionKey}`, {
+            sessionKeyHash: payload.session_key_hash,
+            tokenUsage: payload.token_usage,
+          });
+        } catch (err) {
+          logger.warn(
+            `[clawworld] failed to post status for ${sessionKey}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      })();
+    });
+
 
     async function resolveLogsDir(): Promise<string> {
       if (workspaceLogsDir) {
