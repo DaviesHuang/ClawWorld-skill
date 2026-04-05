@@ -26,6 +26,7 @@ type StatusPayload = {
   event_action: string;
   timestamp: string;
   session_key_hash: string;
+  installed_skills?: string[];
   token_usage?: {
     input_tokens?: number;
     output_tokens?: number;
@@ -39,6 +40,11 @@ type SessionEntryLike = {
   modelOverride?: unknown;
   authProfileOverride?: unknown;
   authProfileOverrideSource?: unknown;
+  skillsSnapshot?: {
+    skills?: Array<{
+      name?: unknown;
+    }>;
+  };
 };
 
 type PayloadText = {
@@ -355,6 +361,26 @@ export default definePluginEntry({
     const lastStatusPushAtBySession = new Map<string, number>();
     const MIN_STATUS_PUSH_INTERVAL_MS = 3_000;
 
+    function loadInstalledSkillsFromSessionSnapshot(sessionKey: string): string[] | undefined {
+      const agentId = resolveAgentIdFromSessionKey(sessionKey);
+      const storePath = api.runtime.agent.session.resolveStorePath(undefined, { agentId });
+      const sessionStore = api.runtime.agent.session.loadSessionStore(storePath, {
+        skipCache: true,
+      }) as Record<string, SessionEntryLike>;
+      const entry = sessionStore[sessionKey] ?? sessionStore[sessionKey.toLowerCase()];
+      const rawSkills = entry?.skillsSnapshot?.skills;
+      if (!Array.isArray(rawSkills) || rawSkills.length === 0) {
+        return undefined;
+      }
+      const skills = rawSkills
+        .map((skill) => (typeof skill?.name === "string" ? skill.name.trim() : ""))
+        .filter(Boolean);
+      if (skills.length === 0) {
+        return undefined;
+      }
+      return [...new Set(skills)].sort();
+    }
+
     async function ensureClawWorldConfig(): Promise<ClawWorldConfig | null> {
       if (clawWorldConfig) {
         return clawWorldConfig;
@@ -403,6 +429,8 @@ export default definePluginEntry({
         }
         lastStatusPushAtBySession.set(sessionKey, now);
 
+        const installedSkills = loadInstalledSkillsFromSessionSnapshot(sessionKey);
+
         const payload: StatusPayload = {
           instance_id: config.instanceId,
           lobster_id: config.lobsterId,
@@ -410,6 +438,7 @@ export default definePluginEntry({
           event_action: "sent",
           timestamp: new Date().toISOString(),
           session_key_hash: hashSessionKey(sessionKey),
+          ...(installedSkills?.length ? { installed_skills: installedSkills } : {}),
           token_usage: {
             ...(usage.input != null ? { input_tokens: usage.input } : {}),
             ...(usage.output != null ? { output_tokens: usage.output } : {}),
