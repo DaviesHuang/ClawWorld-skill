@@ -400,6 +400,95 @@ export default definePluginEntry({
       return clawWorldConfig;
     }
 
+    api.on("session_start", (event, ctx) => {
+      void (async () => {
+        const sessionKey = ctx.sessionKey?.trim() ?? event.sessionKey?.trim();
+
+        logger.debug("[clawworld] session_start hook fired", {
+          sessionId: event.sessionId,
+          sessionKey,
+          agentId: ctx.agentId,
+          resumedFrom: event.resumedFrom,
+        });
+
+        if (!sessionKey) {
+          logger.warn("[clawworld] skip SessionStart POST because sessionKey is missing");
+          return;
+        }
+
+        const config = await ensureClawWorldConfig();
+        if (!config) {
+          logger.warn("[clawworld] skip SessionStart POST because ClawWorld config is unavailable");
+          return;
+        }
+
+        const payload: StatusPayload = {
+          instance_id: config.instanceId,
+          lobster_id: config.lobsterId,
+          event_type: "openclaw",
+          event_action: "SessionStart",
+          timestamp: new Date().toISOString(),
+          session_key_hash: hashSessionKey(sessionKey),
+        };
+
+        try {
+          await postStatus({ config, payload });
+          logger.debug(`[clawworld] SessionStart posted for ${sessionKey}`, {
+            sessionKeyHash: payload.session_key_hash,
+          });
+        } catch (err) {
+          logger.warn(
+            `[clawworld] failed to post SessionStart for ${sessionKey}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      })();
+    });
+
+    api.on("session_end", (event, ctx) => {
+      void (async () => {
+        const sessionKey = ctx.sessionKey?.trim() ?? event.sessionKey?.trim();
+
+        logger.debug("[clawworld] session_end hook fired", {
+          sessionId: event.sessionId,
+          sessionKey,
+          agentId: ctx.agentId,
+          messageCount: event.messageCount,
+          durationMs: event.durationMs,
+        });
+
+        if (!sessionKey) {
+          logger.warn("[clawworld] skip SessionEnd POST because sessionKey is missing");
+          return;
+        }
+
+        const config = await ensureClawWorldConfig();
+        if (!config) {
+          logger.warn("[clawworld] skip SessionEnd POST because ClawWorld config is unavailable");
+          return;
+        }
+
+        const payload: StatusPayload = {
+          instance_id: config.instanceId,
+          lobster_id: config.lobsterId,
+          event_type: "openclaw",
+          event_action: "SessionEnd",
+          timestamp: new Date().toISOString(),
+          session_key_hash: hashSessionKey(sessionKey),
+        };
+
+        try {
+          await postStatus({ config, payload });
+          logger.debug(`[clawworld] SessionEnd posted for ${sessionKey}`, {
+            sessionKeyHash: payload.session_key_hash,
+          });
+        } catch (err) {
+          logger.warn(
+            `[clawworld] failed to post SessionEnd for ${sessionKey}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      })();
+    });
+
     api.on("llm_input", (event, ctx) => {
       void (async () => {
         const sessionKey = ctx.sessionKey?.trim();
