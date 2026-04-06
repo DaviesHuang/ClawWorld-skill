@@ -40,11 +40,6 @@ type SessionEntryLike = {
   modelOverride?: unknown;
   authProfileOverride?: unknown;
   authProfileOverrideSource?: unknown;
-  skillsSnapshot?: {
-    skills?: Array<{
-      name?: unknown;
-    }>;
-  };
 };
 
 type PayloadText = {
@@ -361,24 +356,40 @@ export default definePluginEntry({
     const lastStatusPushAtBySession = new Map<string, number>();
     const MIN_STATUS_PUSH_INTERVAL_MS = 3_000;
 
-    function loadInstalledSkillsFromSessionSnapshot(sessionKey: string): string[] | undefined {
+    async function loadInstalledSkillsFromWorkspace(sessionKey: string): Promise<string[] | undefined> {
       const agentId = resolveAgentIdFromSessionKey(sessionKey);
-      const storePath = api.runtime.agent.session.resolveStorePath(undefined, { agentId });
-      const sessionStore = api.runtime.agent.session.loadSessionStore(storePath, {
-        skipCache: true,
-      }) as Record<string, SessionEntryLike>;
-      const entry = sessionStore[sessionKey] ?? sessionStore[sessionKey.toLowerCase()];
-      const rawSkills = entry?.skillsSnapshot?.skills;
-      if (!Array.isArray(rawSkills) || rawSkills.length === 0) {
+      const workspaceDir = api.runtime.agent.resolveAgentWorkspaceDir(api.config, agentId);
+      if (!workspaceDir) {
         return undefined;
       }
-      const skills = rawSkills
-        .map((skill) => (typeof skill?.name === "string" ? skill.name.trim() : ""))
-        .filter(Boolean);
-      if (skills.length === 0) {
+
+      const skillsDir = path.join(workspaceDir, "skills");
+      try {
+        const entries = await fs.readdir(skillsDir, { withFileTypes: true });
+        const checks = await Promise.all(
+          entries
+            .filter((entry) => entry.isDirectory())
+            .map(async (entry) => {
+              const skillName = entry.name.trim();
+              if (!skillName) {
+                return null;
+              }
+              try {
+                await fs.access(path.join(skillsDir, skillName, "SKILL.md"));
+                return skillName;
+              } catch {
+                return null;
+              }
+            }),
+        );
+        const skills = checks.filter((value): value is string => Boolean(value));
+        if (skills.length === 0) {
+          return undefined;
+        }
+        return [...new Set(skills)].sort();
+      } catch {
         return undefined;
       }
-      return [...new Set(skills)].sort();
     }
 
     async function ensureClawWorldConfig(): Promise<ClawWorldConfig | null> {
@@ -429,7 +440,7 @@ export default definePluginEntry({
         }
         lastStatusPushAtBySession.set(sessionKey, now);
 
-        const installedSkills = loadInstalledSkillsFromSessionSnapshot(sessionKey);
+        const installedSkills = await loadInstalledSkillsFromWorkspace(sessionKey);
 
         const payload: StatusPayload = {
           instance_id: config.instanceId,
