@@ -400,6 +400,52 @@ export default definePluginEntry({
       return clawWorldConfig;
     }
 
+    api.on("llm_input", (event, ctx) => {
+      void (async () => {
+        const sessionKey = ctx.sessionKey?.trim();
+
+        logger.debug("[clawworld] llm_input hook fired", {
+          runId: event.runId,
+          sessionId: event.sessionId,
+          sessionKey,
+          agentId: ctx.agentId,
+          provider: event.provider,
+          model: event.model,
+        });
+
+        if (!sessionKey) {
+          logger.warn("[clawworld] skip UserPromptSubmit POST because sessionKey is missing");
+          return;
+        }
+
+        const config = await ensureClawWorldConfig();
+        if (!config) {
+          logger.warn("[clawworld] skip UserPromptSubmit POST because ClawWorld config is unavailable");
+          return;
+        }
+
+        const payload: StatusPayload = {
+          instance_id: config.instanceId,
+          lobster_id: config.lobsterId,
+          event_type: "openclaw",
+          event_action: "UserPromptSubmit",
+          timestamp: new Date().toISOString(),
+          session_key_hash: hashSessionKey(sessionKey),
+        };
+
+        try {
+          await postStatus({ config, payload });
+          logger.debug(`[clawworld] UserPromptSubmit posted for ${sessionKey}`, {
+            sessionKeyHash: payload.session_key_hash,
+          });
+        } catch (err) {
+          logger.warn(
+            `[clawworld] failed to post UserPromptSubmit for ${sessionKey}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      })();
+    });
+
     api.on("llm_output", (event, ctx) => {
       void (async () => {
         const usage = event.usage;
@@ -445,8 +491,8 @@ export default definePluginEntry({
         const payload: StatusPayload = {
           instance_id: config.instanceId,
           lobster_id: config.lobsterId,
-          event_type: "message",
-          event_action: "sent",
+          event_type: "openclaw",
+          event_action: "Stop",
           timestamp: new Date().toISOString(),
           session_key_hash: hashSessionKey(sessionKey),
           ...(installedSkills?.length ? { installed_skills: installedSkills } : {}),
