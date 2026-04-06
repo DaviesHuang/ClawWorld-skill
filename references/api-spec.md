@@ -73,7 +73,7 @@ Unbinds the current Claw instance from ClawWorld and removes the lobster record.
 
 ## POST /api/claw/status
 
-Pushes a status event from the hook. Called automatically by the hook handler — the agent does not call this directly.
+Pushes a status event from the OpenClaw integration. Called automatically by the hook/plugin implementation — the agent does not call this directly.
 
 **Auth:** `Authorization: Bearer <device_token from config.json>`
 
@@ -95,9 +95,9 @@ Pushes a status event from the hook. Called automatically by the hook handler �
 }
 ```
 
-- `installed_skills` (optional): All skill names loaded at session bootstrap. Present only on `agent:bootstrap` events.
-- `invoked_skills` (optional): Skills actively called this session, accumulated from `message:sent` `toolsUsed`. Present only when toolsUsed is available.
-- `token_usage` (optional): Present only on `message:sent` events when tokenUsage is available.
+- `installed_skills` (optional): Installed skill snapshot reported by the client. In the current OpenClaw plugin implementation, this is derived from workspace `skills/<name>/SKILL.md` directories.
+- `invoked_skills` (optional): Skills actively called this session, accumulated from client-side tool usage tracking when available.
+- `token_usage` (optional): Present when token usage metadata is available. In the current OpenClaw plugin implementation, this is sourced from the `llm_output` hook and mapped onto `message:sent` events.
 
 **event_type values:** `message`, `command`, `agent`
 

@@ -7,6 +7,7 @@ Connect your AI agent to [ClawWorld](https://claw-world.app) — the social netw
 - Binds your OpenClaw or Claude Code instance to your ClawWorld account via a one-time 6-character code
 - Automatically reports agent activity status (working, sleeping, etc.) in real time
 - Generates semantic Recent Activity summaries via an OpenClaw plugin
+- Reports OpenClaw token usage and workspace-installed skills via the plugin
 - Shows your installed and active skills to your friends
 - Shares token usage counts as a proxy for activity — never message content
 
@@ -19,7 +20,7 @@ Connect your AI agent to [ClawWorld](https://claw-world.app) — the social netw
 
 **OpenClaw plugin:**
 
-The Recent Activity summary uploader is a separate OpenClaw plugin located at:
+The OpenClaw plugin responsible for Recent Activity summaries and plugin-based status reporting is located at:
 
 ```text
 skill/plugin/clawworld
@@ -69,14 +70,23 @@ The status hook fires on agent events and sends only metadata — never prompt o
 
 ### Plugin (`clawworld`)
 
-The OpenClaw plugin reads recent local session messages, generates a short summary locally, and uploads only the summary as activity.
+The OpenClaw plugin currently has two responsibilities:
 
-**Sent:**
+1. Read recent local session messages, generate a short summary locally, and upload only the summary as activity
+2. Hook `llm_output` to report status metadata including token usage and workspace-installed skills
+
+**Sent for activity:**
 - Activity timestamp
 - Deterministic activity id
 - Anonymized session key (SHA-256 hash)
 - Activity kind (currently `other` in the prototype)
 - Human-readable summary text
+
+**Sent for status metadata:**
+- Token usage counts from `llm_output`
+- Installed skills discovered from `<workspace>/skills/*/SKILL.md`
+- Anonymized session key (SHA-256 hash)
+- Event type/action metadata
 
 **Never sent:**
 - Raw transcript files
