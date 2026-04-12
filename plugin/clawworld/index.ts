@@ -53,22 +53,31 @@ function isNoActivitySummary(value: string): boolean {
   return value.trim().toUpperCase() === "NONE";
 }
 
-function extractMessagePreview(message: unknown): string {
+function extractMessageRole(message: unknown): string {
+  if (!message || typeof message !== "object") {
+    return "unknown";
+  }
+
+  const record = message as {
+    role?: unknown;
+  };
+
+  return typeof record.role === "string" ? record.role.trim().toLowerCase() || "unknown" : "unknown";
+}
+
+function extractMessageBody(message: unknown): string {
   if (!message || typeof message !== "object") {
     return "<non-object message>";
   }
 
   const record = message as {
-    role?: unknown;
     content?: unknown;
-    __openclaw?: { seq?: unknown; id?: unknown; kind?: unknown };
   };
-
-  const role = typeof record.role === "string" ? record.role : "unknown";
   const content = record.content;
 
   if (typeof content === "string") {
-    return `${role}: ${truncate(content)}`;
+    const normalized = content.replace(/\s+/g, " ").trim();
+    return normalized || "<empty content>";
   }
 
   if (Array.isArray(content)) {
@@ -86,11 +95,39 @@ function extractMessagePreview(message: unknown): string {
       .filter(Boolean);
 
     if (textParts.length > 0) {
-      return `${role}: ${truncate(textParts.join(" "))}`;
+      return textParts.join(" ").replace(/\s+/g, " ").trim();
     }
   }
 
-  return `${role}: <unrenderable content>`;
+  return "<unrenderable content>";
+}
+
+function extractMessagePreview(message: unknown, max = 160): string {
+  const role = extractMessageRole(message);
+  const body = extractMessageBody(message);
+  return `${role}: ${truncate(body, max)}`;
+}
+
+function findLatestUserMessage(messages: unknown[]): { index: number; preview: string } | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (extractMessageRole(messages[index]) === "user") {
+      return {
+        index,
+        preview: extractMessagePreview(messages[index], 280),
+      };
+    }
+  }
+  return null;
+}
+
+function formatRecentContextForSummary(messages: unknown[], latestUserIndex: number | null): string {
+  const end = latestUserIndex == null ? messages.length : latestUserIndex;
+  const start = Math.max(0, end - 4);
+  const contextLines = messages
+    .slice(start, end)
+    .map((message, offset) => `${start + offset + 1}. ${extractMessagePreview(message)}`);
+
+  return contextLines.length > 0 ? contextLines.join("\n") : "<none>";
 }
 
 function resolveAgentIdFromSessionKey(sessionKey: string): string {
@@ -327,11 +364,6 @@ function collectPayloadText(payloads: unknown): string {
     .filter(Boolean)
     .join("\n")
     .trim();
-}
-
-function formatTranscriptForSummary(messages: unknown[]): string {
-  const lines = messages.map((message, index) => `${index + 1}. ${extractMessagePreview(message)}`);
-  return lines.join("\n");
 }
 
 async function appendJsonlLine(filePath: string, record: Record<string, unknown>): Promise<void> {
@@ -660,20 +692,29 @@ export default definePluginEntry({
         defaultModel: api.runtime.agent.defaults.model,
       });
       const { authProfileId, authProfileIdSource } = resolveAuthProfile(sessionEntry);
+      const latestUserMessage = findLatestUserMessage(messages);
+      const latestUserPreview = latestUserMessage?.preview ?? "<missing>";
+      const recentContext = formatRecentContextForSummary(messages, latestUserMessage?.index ?? null);
       const prompt = [
         "You are generating a short, safe activity summary for a coding session.",
-        "Infer the current concrete work topic from the recent messages below.",
+        "Decide whether the LATEST_USER_MESSAGE indicates a real, concrete work topic.",
         "Requirements:",
         "- Output only plain text.",
         "- If there is no clear, concrete work topic, output exactly NONE.",
-        "- Use NONE when the task is vague, meta-only, transitional, or cannot be inferred confidently.",
-        "- Otherwise output exactly 1 sentence, max 140 characters if possible.",
+        "- Output exactly NONE if the latest user message is a heartbeat, ping, pong, health check, keepalive, noop, status probe, connection test, or similar non-work probe.",
+        "- Output exactly NONE if the latest user message is meta-only, transitional, too vague, missing, or cannot be understood confidently.",
+        "- Do NOT infer a work topic from older context alone.",
+        "- RECENT_CONTEXT is only supporting evidence; the latest user message must itself justify the activity.",
+        "- Otherwise output exactly 1 short sentence, max 140 characters if possible.",
         "- Focus on the current task/activity, not generic effort.",
         "- Do not include secrets, credentials, or long quotations.",
         "- Do not explain your reasoning.",
         "",
-        "RECENT_MESSAGES:",
-        formatTranscriptForSummary(messages),
+        "LATEST_USER_MESSAGE:",
+        latestUserPreview,
+        "",
+        "RECENT_CONTEXT:",
+        recentContext,
       ].join("\n");
 
       logger.info(

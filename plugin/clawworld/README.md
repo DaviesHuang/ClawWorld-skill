@@ -36,9 +36,10 @@ openclaw plugins install openclaw-plugin-clawworld
 1. 检查该 session 最近 1 分钟内是否已经上报过 activity；如果上报过则直接跳过
 2. 等待 transcript 落盘后读取最近 session messages
 3. 生成 summary
-4. 如果没有明确工作主题，summary 返回 `NONE`，本次不调用 `/api/claw/activity`
-5. 否则生成 `activity_id` 并调用 `/api/claw/activity`
-6. 把本地结果写入 workspace 下的 `logs/clawworld-activity-summary-test.jsonl`
+4. summary prompt 会优先判断最新一条 user message；如果它像 heartbeat / health check / keepalive / probe，或没有明确工作主题，则返回 `NONE`
+5. 返回 `NONE` 时，本次不调用 `/api/claw/activity`
+6. 否则生成 `activity_id` 并调用 `/api/claw/activity`
+7. 把本地结果写入 workspace 下的 `logs/clawworld-activity-summary-test.jsonl`
 
 ### Status metadata
 
@@ -64,7 +65,7 @@ openclaw plugins install openclaw-plugin-clawworld
 - `installed_skills` 当前是 **workspace skills 快照**，不是 runtime bootstrapFiles。
 - 只有目录中存在 `SKILL.md` 的 `skills/<name>/` 才会被视为一个 skill。
 - activity 上报按 session 做 60 秒节流，避免短时间内重复推送。
-- activity summary 如果判断不出明确工作主题，会返回 `NONE` 并跳过上报。
+- activity summary 会优先依据最新一条 user message 判断；如果它像 heartbeat / probe，或判断不出明确工作主题，会返回 `NONE` 并跳过上报。
 - 所有上报都是 fire-and-forget；ClawWorld 不可用时不会影响 OpenClaw 正常运行。
 
 ## 下一步
