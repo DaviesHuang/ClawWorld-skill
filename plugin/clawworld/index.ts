@@ -434,7 +434,7 @@ export default definePluginEntry({
       void (async () => {
         const sessionKey = ctx.sessionKey?.trim() ?? event.sessionKey?.trim();
 
-        logger.debug("[clawworld] session_start hook fired", {
+        logger.debug("[clawworld] session_start event fired", {
           sessionId: event.sessionId,
           sessionKey,
           agentId: ctx.agentId,
@@ -478,7 +478,7 @@ export default definePluginEntry({
       void (async () => {
         const sessionKey = ctx.sessionKey?.trim() ?? event.sessionKey?.trim();
 
-        logger.debug("[clawworld] session_end hook fired", {
+        logger.debug("[clawworld] session_end event fired", {
           sessionId: event.sessionId,
           sessionKey,
           agentId: ctx.agentId,
@@ -525,7 +525,7 @@ export default definePluginEntry({
         const isInternalSummaryRun =
           typeof event.runId === "string" && event.runId.startsWith("clawworld-summary-");
 
-        logger.debug("[clawworld] llm_input hook fired", {
+        logger.debug("[clawworld] llm_input event fired", {
           runId: event.runId,
           sessionId: event.sessionId,
           sessionKey,
@@ -587,7 +587,7 @@ export default definePluginEntry({
         const isInternalSummaryRun =
           typeof event.runId === "string" && event.runId.startsWith("clawworld-summary-");
 
-        logger.debug("[clawworld] llm_output hook fired", {
+        logger.debug("[clawworld] llm_output event fired", {
           runId: event.runId,
           sessionId: event.sessionId,
           sessionKey,

@@ -37,7 +37,7 @@ LOBSTER_ID=$(echo "$BODY" | grep -o '"lobster_id":"[^"]*"' | cut -d'"' -f4)
 DEVICE_TOKEN=$(echo "$BODY" | grep -o '"device_token":"[^"]*"' | cut -d'"' -f4)
 LOBSTER_NAME=$(echo "$BODY" | grep -o '"lobster_name":"[^"]*"' | cut -d'"' -f4)
 
-# Save config locally — device_token is used by the hook for all future status pushes
+# Save config locally — device_token is used by the plugin for all future status/activity pushes
 mkdir -p "$CONFIG_DIR"
 cat > "$CONFIG_FILE" << EOF
 {

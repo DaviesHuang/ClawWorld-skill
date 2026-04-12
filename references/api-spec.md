@@ -9,7 +9,7 @@ Only call the endpoints listed here.
 
 ## POST /api/claw/bind/verify
 
-Verifies a binding code and creates a lobster record. Returns the device token used for all future status pushes.
+Verifies a binding code and creates a lobster record. Returns the device token used for all future plugin-based status/activity pushes.
 
 **Auth:** None — the binding code itself is the credential.
 
@@ -73,7 +73,7 @@ Unbinds the current Claw instance from ClawWorld and removes the lobster record.
 
 ## POST /api/claw/status
 
-Pushes a status event from the OpenClaw integration. Called automatically by the hook/plugin implementation — the agent does not call this directly.
+Pushes a status event from the OpenClaw plugin integration. Called automatically by the plugin implementation — the agent does not call this directly.
 
 **Auth:** `Authorization: Bearer <device_token from config.json>`
 
@@ -82,12 +82,11 @@ Pushes a status event from the OpenClaw integration. Called automatically by the
 {
   "instance_id": "<instance_id from config.json>",
   "lobster_id": "<lobster_id from config.json>",
-  "event_type": "message",
-  "event_action": "received",
+  "event_type": "openclaw",
+  "event_action": "Stop",
   "timestamp": "2026-03-22T14:00:00.000Z",
   "session_key_hash": "<16-char hex>",
   "installed_skills": ["github", "claude-code"],
-  "invoked_skills": ["github"],
   "token_usage": {
     "input_tokens": 1200,
     "output_tokens": 340
@@ -96,12 +95,12 @@ Pushes a status event from the OpenClaw integration. Called automatically by the
 ```
 
 - `installed_skills` (optional): Installed skill snapshot reported by the client. In the current OpenClaw plugin implementation, this is derived from workspace `skills/<name>/SKILL.md` directories.
-- `invoked_skills` (optional): Skills actively called this session, accumulated from client-side tool usage tracking when available.
-- `token_usage` (optional): Present when token usage metadata is available. In the current OpenClaw plugin implementation, this is sourced from the `llm_output` hook and mapped onto `message:sent` events.
+- `invoked_skills` (optional): Reserved for future plugin-side tool tracking when available. The current plugin may omit this field.
+- `token_usage` (optional): Present when token usage metadata is available. In the current OpenClaw plugin implementation, this is sourced from the `llm_output` event and typically attached to `Stop` events.
 
-**event_type values:** `message`, `command`, `agent`
+**event_type values:** currently `openclaw`
 
-**event_action values:** `received`, `sent`, `new`, `reset`, `stop`, `bootstrap`
+**event_action values:** `SessionStart`, `UserPromptSubmit`, `Stop`, `SessionEnd`
 
 **Response 202:**
 ```json

@@ -2,7 +2,7 @@
  * Config management for the ClawWorld skill.
  * Reads and writes ~/.openclaw/clawworld/config.json.
  * This file is created by bind.sh during the bind flow and
- * read by the hook handler on every agent event.
+ * read by the OpenClaw plugin for status/activity reporting.
  */
 
 import * as fs from 'fs';
