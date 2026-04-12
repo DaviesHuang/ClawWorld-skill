@@ -1,7 +1,7 @@
 {
   "id": "openclaw-plugin-clawworld",
   "name": "ClawWorld",
-  "description": "ClawWorld plugin PoC for logging transcript updates and recent session messages.",
+  "description": "ClawWorld plugin PoC for posting Recent Activity on llm_input and status on llm_output.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

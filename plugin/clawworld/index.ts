@@ -5,13 +5,6 @@ import path from "node:path";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { createClawWorldLogger } from "./clawworld-logger";
 
-type TranscriptUpdate = {
-  sessionFile: string;
-  sessionKey?: string;
-  message?: unknown;
-  messageId?: string;
-};
-
 type ClawWorldConfig = {
   deviceToken: string;
   lobsterId: string;
@@ -54,6 +47,10 @@ function truncate(value: string, max = 160): string {
     return normalized;
   }
   return `${normalized.slice(0, max - 1)}…`;
+}
+
+function isNoActivitySummary(value: string): boolean {
+  return value.trim().toUpperCase() === "NONE";
 }
 
 function extractMessagePreview(message: unknown): string {
@@ -345,16 +342,17 @@ async function appendJsonlLine(filePath: string, record: Record<string, unknown>
 export default definePluginEntry({
   id: "openclaw-plugin-clawworld",
   name: "ClawWorld",
-  description: "ClawWorld plugin PoC that summarizes transcript updates into a workspace log.",
+  description: "ClawWorld plugin that posts Recent Activity on llm_input and status on llm_output.",
   register(api) {
     const logger = createClawWorldLogger("plugin", api.logger);
 
-    let unsubscribe: (() => void) | null = null;
-     let workspaceLogsDir: string | null = null;
-     let clawWorldConfig: ClawWorldConfig | null = null;
-     const inFlightSessions = new Set<string>();
+    let workspaceLogsDir: string | null = null;
+    let clawWorldConfig: ClawWorldConfig | null = null;
+    const inFlightSessions = new Set<string>();
     const lastStatusPushAtBySession = new Map<string, number>();
+    const lastActivityPushAtBySession = new Map<string, number>();
     const MIN_STATUS_PUSH_INTERVAL_MS = 3_000;
+    const MIN_ACTIVITY_PUSH_INTERVAL_MS = 60_000;
 
     async function loadInstalledSkillsFromWorkspace(sessionKey: string): Promise<string[] | undefined> {
       const agentId = resolveAgentIdFromSessionKey(sessionKey);
@@ -492,6 +490,8 @@ export default definePluginEntry({
     api.on("llm_input", (event, ctx) => {
       void (async () => {
         const sessionKey = ctx.sessionKey?.trim();
+        const isInternalSummaryRun =
+          typeof event.runId === "string" && event.runId.startsWith("clawworld-summary-");
 
         logger.debug("[clawworld] llm_input hook fired", {
           runId: event.runId,
@@ -500,16 +500,22 @@ export default definePluginEntry({
           agentId: ctx.agentId,
           provider: event.provider,
           model: event.model,
+          isInternalSummaryRun,
         });
 
         if (!sessionKey) {
-          logger.warn("[clawworld] skip UserPromptSubmit POST because sessionKey is missing");
+          logger.warn("[clawworld] skip llm_input handling because sessionKey is missing");
+          return;
+        }
+
+        if (isInternalSummaryRun) {
+          logger.debug(`[clawworld] skip llm_input handling for internal summary run ${event.runId}`);
           return;
         }
 
         const config = await ensureClawWorldConfig();
         if (!config) {
-          logger.warn("[clawworld] skip UserPromptSubmit POST because ClawWorld config is unavailable");
+          logger.warn("[clawworld] skip llm_input handling because ClawWorld config is unavailable");
           return;
         }
 
@@ -532,6 +538,13 @@ export default definePluginEntry({
             `[clawworld] failed to post UserPromptSubmit for ${sessionKey}: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
+
+        await handleActivityFromLlmInput({
+          config,
+          sessionKey,
+          runId: typeof event.runId === "string" ? event.runId : undefined,
+          sessionId: typeof event.sessionId === "string" ? event.sessionId : undefined,
+        });
       })();
     });
 
@@ -539,6 +552,8 @@ export default definePluginEntry({
       void (async () => {
         const usage = event.usage;
         const sessionKey = ctx.sessionKey?.trim();
+        const isInternalSummaryRun =
+          typeof event.runId === "string" && event.runId.startsWith("clawworld-summary-");
 
         logger.debug("[clawworld] llm_output hook fired", {
           runId: event.runId,
@@ -549,10 +564,16 @@ export default definePluginEntry({
           model: event.model,
           usage: usage ?? null,
           assistantTextCount: Array.isArray(event.assistantTexts) ? event.assistantTexts.length : 0,
+          isInternalSummaryRun,
         });
 
         if (!sessionKey) {
           logger.warn("[clawworld] skip status POST because sessionKey is missing");
+          return;
+        }
+
+        if (isInternalSummaryRun) {
+          logger.debug(`[clawworld] skip llm_output status POST for internal summary run ${event.runId}`);
           return;
         }
 
@@ -641,13 +662,15 @@ export default definePluginEntry({
       const { authProfileId, authProfileIdSource } = resolveAuthProfile(sessionEntry);
       const prompt = [
         "You are generating a short, safe activity summary for a coding session.",
-        "Summarize what the agent appears to be doing based on the recent messages below.",
+        "Infer the current concrete work topic from the recent messages below.",
         "Requirements:",
         "- Output only plain text.",
-        "- 1 sentence, max 140 characters if possible.",
-        "- Focus on the current task/activity.",
+        "- If there is no clear, concrete work topic, output exactly NONE.",
+        "- Use NONE when the task is vague, meta-only, transitional, or cannot be inferred confidently.",
+        "- Otherwise output exactly 1 sentence, max 140 characters if possible.",
+        "- Focus on the current task/activity, not generic effort.",
         "- Do not include secrets, credentials, or long quotations.",
-        "- If the task is unclear, say 'Working on an unclear task'.",
+        "- Do not explain your reasoning.",
         "",
         "RECENT_MESSAGES:",
         formatTranscriptForSummary(messages),
@@ -682,28 +705,34 @@ export default definePluginEntry({
       return truncate(text, 280);
     }
 
-    async function handleUpdate(update: TranscriptUpdate): Promise<void> {
-      const sessionRef = update.sessionKey?.trim();
-      const updateLabel = sessionRef || update.sessionFile;
+    async function handleActivityFromLlmInput(params: {
+      config: ClawWorldConfig;
+      sessionKey: string;
+      runId?: string;
+      sessionId?: string;
+    }): Promise<void> {
+      const sessionRef = params.sessionKey.trim();
 
       logger.info(
-        `[clawworld] transcript update: sessionKey=${sessionRef ?? "<missing>"} messageId=${update.messageId ?? "<missing>"} sessionFile=${update.sessionFile}`,
+        `[clawworld] activity trigger (llm_input): sessionKey=${sessionRef} runId=${params.runId ?? "<missing>"} sessionId=${params.sessionId ?? "<missing>"}`,
       );
 
-      if (!sessionRef) {
-        logger.info(
-          `[clawworld] skip summary generation because sessionKey is missing for ${updateLabel}`,
-        );
+      const now = Date.now();
+      const lastPushAt = lastActivityPushAtBySession.get(sessionRef) ?? 0;
+      if (now - lastPushAt < MIN_ACTIVITY_PUSH_INTERVAL_MS) {
+        logger.debug(`[clawworld] skip activity POST due to 60s throttle for ${sessionRef}`);
         return;
       }
 
       if (inFlightSessions.has(sessionRef)) {
-        logger.debug(`[clawworld] skip overlapping summary run for ${sessionRef}`);
+        logger.debug(`[clawworld] skip overlapping activity run for ${sessionRef}`);
         return;
       }
 
       inFlightSessions.add(sessionRef);
       try {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
         const { messages } = await api.runtime.subagent.getSessionMessages({
           sessionKey: sessionRef,
           limit: 8,
@@ -721,13 +750,26 @@ export default definePluginEntry({
         const sessionKeyHash = hashSessionKey(sessionRef);
         const kind = "other";
 
-        if (!clawWorldConfig) {
-          logger.info("[clawworld] skip activity POST because ClawWorld config is unavailable");
+        if (isNoActivitySummary(summary)) {
+          await appendJsonlLine(outputFile, {
+            ts: activityAt,
+            source: "llm_input",
+            runId: params.runId,
+            sessionId: params.sessionId,
+            sessionKey: sessionRef,
+            recentMessageCount: messages.length,
+            sessionKeyHash,
+            kind,
+            summary,
+            posted: false,
+            skippedReason: "no_clear_work_topic",
+          });
+          logger.info(`[clawworld] skip activity POST for ${sessionRef} because summary returned NONE`);
           return;
         }
 
         const activityId = buildActivityId({
-          lobsterId: clawWorldConfig.lobsterId,
+          lobsterId: params.config.lobsterId,
           activityAt,
           sessionKeyHash,
           kind,
@@ -735,19 +777,21 @@ export default definePluginEntry({
         });
 
         await postActivity({
-          config: clawWorldConfig,
+          config: params.config,
           activityAt,
           activityId,
           sessionKeyHash,
           kind,
           summary,
         });
+        lastActivityPushAtBySession.set(sessionRef, Date.now());
 
         await appendJsonlLine(outputFile, {
           ts: activityAt,
+          source: "llm_input",
+          runId: params.runId,
+          sessionId: params.sessionId,
           sessionKey: sessionRef,
-          sessionFile: update.sessionFile,
-          messageId: update.messageId,
           recentMessageCount: messages.length,
           sessionKeyHash,
           activityId,
@@ -756,41 +800,14 @@ export default definePluginEntry({
           posted: true,
         });
 
-        logger.info(`[clawworld] summary posted for ${sessionRef}: ${summary}`);
+        logger.info(`[clawworld] activity posted for ${sessionRef}: ${summary}`);
       } catch (err) {
         logger.warn(
-          `[clawworld] failed to summarize recent messages for ${sessionRef}: ${err instanceof Error ? err.message : String(err)}`,
+          `[clawworld] failed to post activity for ${sessionRef} on llm_input: ${err instanceof Error ? err.message : String(err)}`,
         );
       } finally {
         inFlightSessions.delete(sessionRef);
       }
     }
-
-    api.registerService({
-      id: "clawworld-listener",
-      async start(ctx) {
-        const serviceLogger = createClawWorldLogger("service", ctx.logger);
-        if (unsubscribe) {
-          return;
-        }
-
-        const logsDir = await resolveLogsDir();
-        clawWorldConfig = await loadClawWorldConfig();
-        unsubscribe = api.runtime.events.onSessionTranscriptUpdate((update) => {
-          void handleUpdate(update as TranscriptUpdate);
-        });
-
-        serviceLogger.info("transcript listener started", {
-          logsDir,
-          configLoaded: clawWorldConfig ? "yes" : "no",
-        });
-      },
-      stop(ctx) {
-        const serviceLogger = createClawWorldLogger("service", ctx.logger);
-        unsubscribe?.();
-        unsubscribe = null;
-        serviceLogger.info("transcript listener stopped");
-      },
-    });
   },
 });
