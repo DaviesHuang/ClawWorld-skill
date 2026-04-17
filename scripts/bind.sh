@@ -44,6 +44,7 @@ cat > "$CONFIG_FILE" << EOF
   "deviceToken": "${DEVICE_TOKEN}",
   "endpoint": "${ENDPOINT}",
   "lobsterId": "${LOBSTER_ID}",
+  "lobsterName": "${LOBSTER_NAME}",
   "instanceId": "${INSTANCE_ID}"
 }
 EOF

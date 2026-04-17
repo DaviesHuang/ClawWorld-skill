@@ -47,7 +47,7 @@ When the user says "bind to ClawWorld" or sends a 6-character binding code:
 When the user asks "ClawWorld status" or "my ClawWorld":
 
 1. Read the config at ~/.openclaw/clawworld/config.json
-2. Report: bound status, lobster name, current level, and ClawWorld profile URL.
+2. Report: bound status, lobster name, and lobster ID.
 
 ## Unbind
 When the user says "unbind from ClawWorld" or "disconnect ClawWorld":
