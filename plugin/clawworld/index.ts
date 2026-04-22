@@ -256,7 +256,7 @@ function buildActivityId(params: {
 async function loadClawWorldConfig(): Promise<ClawWorldConfig | null> {
   const configFile = path.join(os.homedir(), ".openclaw", "clawworld", "config.json");
   try {
-    const raw = await fs.readFile(configFile, "utf8");
+    const raw = (await fs.readFile(configFile, "utf8")).replace(/^\uFEFF/, '');
     const parsed = JSON.parse(raw) as Partial<ClawWorldConfig>;
     if (
       typeof parsed.deviceToken !== "string" ||

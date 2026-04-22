@@ -24,7 +24,7 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 export function readConfig(): ClawWorldConfig | null {
   try {
-    const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
+    const raw = fs.readFileSync(CONFIG_FILE, 'utf-8').replace(/^\uFEFF/, '');
     return JSON.parse(raw) as ClawWorldConfig;
   } catch {
     return null; // Not bound yet
