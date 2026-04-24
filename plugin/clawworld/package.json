@@ -9,6 +9,10 @@
     "plugin",
     "clawworld"
   ],
+  "dependencies": {
+    "@types/ws": "^8.18.1",
+    "ws": "^8.20.0"
+  },
   "devDependencies": {
     "openclaw": "2026.3.27"
   },
@@ -17,7 +21,8 @@
   },
   "openclaw": {
     "extensions": [
-      "./index.ts"
+      "./index.ts",
+      "./channel.ts"
     ],
     "compat": {
       "pluginApi": ">=2026.3.27",

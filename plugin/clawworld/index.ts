@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { clawworldChannelPlugin } from "./channel";
 import { createClawWorldLogger } from "./clawworld-logger";
 
 type ClawWorldConfig = {
@@ -377,6 +378,13 @@ export default definePluginEntry({
   description: "ClawWorld plugin that posts Recent Activity on llm_input and status on llm_output.",
   register(api) {
     const logger = createClawWorldLogger("plugin", api.logger);
+    const _api = api as any;
+    if (typeof _api.registerChannel === "function") {
+      _api.registerChannel({ plugin: clawworldChannelPlugin });
+      logger.info("[clawworld-channel] registered via api.registerChannel");
+    } else {
+      logger.warn("[clawworld-channel] no registerChannel; keys: " + Object.keys(_api).join(","));
+    }
 
     let workspaceLogsDir: string | null = null;
     let clawWorldConfig: ClawWorldConfig | null = null;

@@ -2,6 +2,10 @@
   "id": "openclaw-plugin-clawworld",
   "name": "ClawWorld",
   "description": "ClawWorld plugin PoC for posting Recent Activity on llm_input and status on llm_output.",
+  "extensions": [
+    "./index.ts",
+    "./channel.ts"
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
