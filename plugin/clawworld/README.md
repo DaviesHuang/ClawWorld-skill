@@ -38,7 +38,7 @@ openclaw plugins install openclaw-plugin-clawworld
 3. 生成 summary
 4. summary prompt 会优先判断最新一条 user message；如果它像 heartbeat / health check / keepalive / probe，或没有明确工作主题，则返回 `NONE`
 5. 返回 `NONE` 时，本次不调用 `/api/claw/activity`
-6. 否则生成 `activity_id` 并调用 `/api/claw/activity`
+6. 否则生成 `activity_id`，带上当前 session 解析出的 model provider、model 和 OpenClaw version，并调用 `/api/claw/activity`
 7. 把本地结果写入 workspace 下的 `logs/clawworld-activity-summary-test.jsonl`
 
 ### Status metadata

@@ -6,6 +6,8 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { clawworldChannelPlugin } from "./channel";
 import { createClawWorldLogger } from "./clawworld-logger";
 
+const OPENCLAW_BUILD_VERSION = "2026.3.27";
+
 type ClawWorldConfig = {
   deviceToken: string;
   lobsterId: string;
@@ -40,6 +42,12 @@ type PayloadText = {
   text?: string;
   isReasoning?: boolean;
   isError?: boolean;
+};
+
+type ActivityModelMetadata = {
+  provider?: string;
+  model?: string;
+  openclaw_version?: string;
 };
 
 function truncate(value: string, max = 160): string {
@@ -233,6 +241,30 @@ function resolveAuthProfile(entry?: SessionEntryLike): {
   };
 }
 
+function readNestedString(source: unknown, pathParts: string[]): string | undefined {
+  let current = source;
+  for (const part of pathParts) {
+    if (!current || typeof current !== "object") {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+
+  return typeof current === "string" && current.trim() ? current.trim() : undefined;
+}
+
+function resolveOpenClawVersion(api: unknown): string {
+  return (
+    readNestedString(api, ["runtime", "openclawVersion"]) ??
+    readNestedString(api, ["runtime", "gatewayVersion"]) ??
+    readNestedString(api, ["runtime", "version"]) ??
+    readNestedString(api, ["versions", "openclaw"]) ??
+    readNestedString(api, ["versions", "gateway"]) ??
+    readNestedString(api, ["pluginApiVersion"]) ??
+    OPENCLAW_BUILD_VERSION
+  );
+}
+
 function hashSessionKey(sessionKey: string): string {
   return crypto.createHash("sha256").update(sessionKey).digest("hex").slice(0, 16);
 }
@@ -302,6 +334,7 @@ async function postActivity(params: {
   sessionKeyHash: string;
   kind: string;
   summary: string;
+  metadata?: ActivityModelMetadata;
 }): Promise<void> {
   const response = await fetch(`${params.config.endpoint}/api/claw/activity`, {
     method: "POST",
@@ -317,6 +350,11 @@ async function postActivity(params: {
       session_key_hash: params.sessionKeyHash,
       kind: params.kind,
       summary: params.summary,
+      ...(params.metadata?.provider ? { provider: params.metadata.provider } : {}),
+      ...(params.metadata?.model ? { model: params.metadata.model } : {}),
+      ...(params.metadata?.openclaw_version
+        ? { openclaw_version: params.metadata.openclaw_version }
+        : {}),
     }),
     signal: AbortSignal.timeout(5_000),
   });
@@ -678,14 +716,13 @@ export default definePluginEntry({
       return workspaceLogsDir;
     }
 
-    async function summarizeRecentMessages(sessionKey: string, messages: unknown[]): Promise<string> {
-      const logsDir = await resolveLogsDir();
-      const summarySessionId = `clawworld-summary-${crypto
-        .createHash("sha1")
-        .update(sessionKey)
-        .digest("hex")
-        .slice(0, 12)}`;
-      const summarySessionFile = path.join(logsDir, `${summarySessionId}.jsonl`);
+    function resolveSessionRunContext(sessionKey: string): {
+      agentId: string;
+      provider: string;
+      model: string;
+      authProfileId?: string;
+      authProfileIdSource?: "auto" | "user";
+    } {
       const agentId = resolveAgentIdFromSessionKey(sessionKey);
       const storePath = api.runtime.agent.session.resolveStorePath(undefined, { agentId });
       const sessionStore = api.runtime.agent.session.loadSessionStore(storePath, {
@@ -700,6 +737,26 @@ export default definePluginEntry({
         defaultModel: api.runtime.agent.defaults.model,
       });
       const { authProfileId, authProfileIdSource } = resolveAuthProfile(sessionEntry);
+
+      return {
+        agentId,
+        provider,
+        model,
+        authProfileId,
+        authProfileIdSource,
+      };
+    }
+
+    async function summarizeRecentMessages(sessionKey: string, messages: unknown[]): Promise<string> {
+      const logsDir = await resolveLogsDir();
+      const summarySessionId = `clawworld-summary-${crypto
+        .createHash("sha1")
+        .update(sessionKey)
+        .digest("hex")
+        .slice(0, 12)}`;
+      const summarySessionFile = path.join(logsDir, `${summarySessionId}.jsonl`);
+      const { agentId, provider, model, authProfileId, authProfileIdSource } =
+        resolveSessionRunContext(sessionKey);
       const latestUserMessage = findLatestUserMessage(messages);
       const latestUserPreview = latestUserMessage?.preview ?? "<missing>";
       const recentContext = formatRecentContextForSummary(messages, latestUserMessage?.index ?? null);
@@ -798,6 +855,12 @@ export default definePluginEntry({
         const activityAt = new Date().toISOString();
         const sessionKeyHash = hashSessionKey(sessionRef);
         const kind = "other";
+        const runContext = resolveSessionRunContext(sessionRef);
+        const activityMetadata: ActivityModelMetadata = {
+          provider: runContext.provider,
+          model: runContext.model,
+          openclaw_version: resolveOpenClawVersion(api),
+        };
 
         if (isNoActivitySummary(summary)) {
           await appendJsonlLine(outputFile, {
@@ -810,6 +873,9 @@ export default definePluginEntry({
             sessionKeyHash,
             kind,
             summary,
+            modelProvider: activityMetadata.provider,
+            model: activityMetadata.model,
+            openclawVersion: activityMetadata.openclaw_version,
             posted: false,
             skippedReason: "no_clear_work_topic",
           });
@@ -832,6 +898,7 @@ export default definePluginEntry({
           sessionKeyHash,
           kind,
           summary,
+          metadata: activityMetadata,
         });
         lastActivityPushAtBySession.set(sessionRef, Date.now());
 
@@ -846,6 +913,9 @@ export default definePluginEntry({
           activityId,
           kind,
           summary,
+          modelProvider: activityMetadata.provider,
+          model: activityMetadata.model,
+          openclawVersion: activityMetadata.openclaw_version,
           posted: true,
         });
 

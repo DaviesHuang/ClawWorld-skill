@@ -124,7 +124,10 @@ Pushes a semantic activity summary from the plugin.
   "activity_id": "<deterministic activity id>",
   "session_key_hash": "<16-char hex>",
   "kind": "coding",
-  "summary": "Working on plugin activity summary integration"
+  "summary": "Working on plugin activity summary integration",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "openclaw_version": "2026.3.27"
 }
 ```
 
@@ -132,6 +135,9 @@ Pushes a semantic activity summary from the plugin.
 - `activity_id` (required): Client-generated id used to build `activityKey` with `activity_at`.
 - `kind` (required): `coding | writing | researching | planning | communicating | other`.
 - `summary` (required): Human-readable activity text.
+- `provider` (optional): Provider resolved from the OpenClaw session/config.
+- `model` (optional): Model resolved from the OpenClaw session/config.
+- `openclaw_version` (optional): Runtime OpenClaw/gateway version when exposed by the plugin API, otherwise the plugin build target version.
 
 **Response 202:**
 ```json

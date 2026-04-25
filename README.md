@@ -70,6 +70,7 @@ The OpenClaw plugin is now the single OpenClaw integration path. It has two resp
 - Anonymized session key (SHA-256 hash)
 - Activity kind (currently `other` in the prototype)
 - Human-readable summary text
+- Model provider, model, and OpenClaw version metadata when available
 
 **Sent for status metadata:**
 - Session lifecycle + model events (`SessionStart`, `UserPromptSubmit`, `Stop`, `SessionEnd`)
