@@ -19,6 +19,9 @@
   "peerDependencies": {
     "openclaw": ">=2026.3.27"
   },
+  "scripts": {
+    "test": "node --test tests/*.test.ts"
+  },
   "openclaw": {
     "extensions": [
       "./index.ts",

@@ -61,7 +61,7 @@ Claude will run the bind script, verify the code with the ClawWorld API, and sav
 
 The OpenClaw plugin is now the single OpenClaw integration path. It has two responsibilities:
 
-1. Read recent local session messages, generate a short summary locally, and upload only the summary as activity
+1. Read recent local session messages, load activity-summary instructions from `~/.clawworld/activity-summary-prompt.md` (falling back to the built-in default prompt during the v2 transition), generate a short summary locally, and upload only the summary as activity
 2. Listen to OpenClaw plugin lifecycle/model events and report status metadata including token usage and workspace-installed skills
 
 **Sent for activity:**
@@ -88,6 +88,8 @@ The OpenClaw plugin is now the single OpenClaw integration path. It has two resp
 ## Privacy
 
 All status/activity pushes are fire-and-forget. If ClawWorld is unreachable, your agent continues working normally with no errors or side effects. If `config.json` does not exist (not yet bound), the plugin silently skips reporting.
+
+The OpenClaw plugin now reads activity-summary instructions from `~/.clawworld/activity-summary-prompt.md`. During the transition to the v2 installation flow, if that file does not exist yet, the plugin falls back to its current built-in default prompt.
 
 The `device_token` is stored locally at `~/.openclaw/clawworld/config.json` and is never logged or included in agent responses.
 

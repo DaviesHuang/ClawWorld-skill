@@ -19,13 +19,15 @@ The plugin currently includes two reporting paths:
   - Reads a snapshot of installed skills from workspace `skills/<skill-name>/SKILL.md`
   - Sends status metadata via `POST /api/claw/status`
 
-The plugin reads ClawWorld configuration from `~/.openclaw/clawworld/config.json` and uses a dedicated ClawWorld logger helper for plugin logs.
+The plugin reads ClawWorld configuration from `~/.openclaw/clawworld/config.json`, reads activity-summary instructions from `~/.clawworld/activity-summary-prompt.md`, and uses a dedicated ClawWorld logger helper for plugin logs.
 
 ## Files
 
 - `package.json`
 - `openclaw.plugin.json`
 - `index.ts`
+- `activity-summary-prompt.ts`
+- `tests/activity-summary-prompt.test.ts`
 
 ## Current Behavior
 
@@ -35,9 +37,9 @@ On each `llm_input`, the plugin will:
 
 1. Check whether activity has already been reported for the session within the last 1 minute; if so, it skips reporting
 2. Wait for the transcript to be written, then read recent session messages
-3. Generate a summary
-4. The summary prompt first inspects the latest user message; if it looks like a heartbeat, health check, keepalive, or probe, or if there is no clear work topic, it returns `NONE`
-5. If `NONE` is returned, `/api/claw/activity` is not called for this event
+3. Load the activity-summary instructions from `~/.clawworld/activity-summary-prompt.md`; if the file does not exist yet, fall back to the plugin's built-in default prompt during the v2 transition
+4. Prepend the current `LATEST_USER_MESSAGE` and `RECENT_CONTEXT` before those instructions, then generate a summary
+5. If the summarizer returns `NONE`, `/api/claw/activity` is not called for this event
 6. Otherwise, generate an `activity_id`, include the model provider, model, and OpenClaw version resolved from the current session, and call `/api/claw/activity`
 7. Write the local result to `logs/clawworld-activity-summary-test.jsonl` under the workspace
 
@@ -65,6 +67,9 @@ The current status payload only includes:
 - `installed_skills` is currently a **workspace skills snapshot**, not runtime bootstrap files.
 - Only directories under `skills/<name>/` that contain `SKILL.md` are treated as installed skills.
 - Activity reporting is throttled per session to once every 60 seconds to avoid duplicate pushes in a short time window.
+- The activity summary instructions live at `~/.clawworld/activity-summary-prompt.md`.
+- The plugin prepends the current `LATEST_USER_MESSAGE` and `RECENT_CONTEXT` before those instructions when it calls the embedded Pi summarizer.
+- If `~/.clawworld/activity-summary-prompt.md` is missing during the transition, the plugin falls back to its built-in default instructions.
 - The activity summary is primarily based on the latest user message; if it looks like a heartbeat or probe, or no clear work topic can be determined, it returns `NONE` and skips reporting.
 - All reporting is fire-and-forget; if ClawWorld is unavailable, OpenClaw continues running normally.
 
