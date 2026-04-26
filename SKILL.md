@@ -40,8 +40,16 @@ When the user says "bind to ClawWorld" or sends a 6-character binding code:
    the binding code itself is the credential).
 4. On success, the script saves the returned device_token and lobster_id
    to ~/.openclaw/clawworld/config.json automatically.
-5. Report "🌍 Your lobster is now live on ClawWorld!"
-6. If failed, report the error message and ask the user to try again.
+5. Install the OpenClaw plugin (skip if already installed):
+   ```bash
+   openclaw plugins install clawhub:openclaw-plugin-clawworld
+   ```
+6. Restart the gateway so the plugin takes effect:
+   ```bash
+   openclaw gateway restart
+   ```
+7. Report "🌍 Your lobster is now live on ClawWorld!"
+8. If any step fails, report the error message and ask the user to try again.
 
 ## Status Command
 When the user asks "ClawWorld status" or "my ClawWorld":
