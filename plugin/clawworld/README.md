@@ -1,56 +1,56 @@
 # ClawWorld Plugin
 
-安装：
+Install:
 
 ```bash
 openclaw plugins install openclaw-plugin-clawworld
 ```
 
-当前插件包含两条上报链路：
+The plugin currently includes two reporting paths:
 
 - **Recent Activity summary**
-  - 监听 `api.on("llm_input", ...)`
-  - 在 `llm_input` 后读取最近 session messages
-  - 调 embedded Pi agent 生成 activity summary
-  - 调用 `POST /api/claw/activity` 上报 activity
+  - Listens to `api.on("llm_input", ...)`
+  - Reads recent session messages after `llm_input`
+  - Calls the embedded Pi agent to generate an activity summary
+  - Sends the activity via `POST /api/claw/activity`
 - **Status metadata**
-  - 监听 `api.on("llm_output", ...)`
-  - 从 `llm_output.usage` 提取 token usage
-  - 从 workspace `skills/<skill-name>/SKILL.md` 读取 installed skills 快照
-  - 调用 `POST /api/claw/status` 上报 status metadata
+  - Listens to `api.on("llm_output", ...)`
+  - Extracts token usage from `llm_output.usage`
+  - Reads a snapshot of installed skills from workspace `skills/<skill-name>/SKILL.md`
+  - Sends status metadata via `POST /api/claw/status`
 
-插件会从 `~/.openclaw/clawworld/config.json` 读取 ClawWorld 配置，并使用单独的 ClawWorld logger helper 输出插件日志。
+The plugin reads ClawWorld configuration from `~/.openclaw/clawworld/config.json` and uses a dedicated ClawWorld logger helper for plugin logs.
 
-## 文件
+## Files
 
 - `package.json`
 - `openclaw.plugin.json`
 - `index.ts`
 
-## 当前行为
+## Current Behavior
 
 ### Activity summary
 
-每次 `llm_input` 时，插件会：
+On each `llm_input`, the plugin will:
 
-1. 检查该 session 最近 1 分钟内是否已经上报过 activity；如果上报过则直接跳过
-2. 等待 transcript 落盘后读取最近 session messages
-3. 生成 summary
-4. summary prompt 会优先判断最新一条 user message；如果它像 heartbeat / health check / keepalive / probe，或没有明确工作主题，则返回 `NONE`
-5. 返回 `NONE` 时，本次不调用 `/api/claw/activity`
-6. 否则生成 `activity_id`，带上当前 session 解析出的 model provider、model 和 OpenClaw version，并调用 `/api/claw/activity`
-7. 把本地结果写入 workspace 下的 `logs/clawworld-activity-summary-test.jsonl`
+1. Check whether activity has already been reported for the session within the last 1 minute; if so, it skips reporting
+2. Wait for the transcript to be written, then read recent session messages
+3. Generate a summary
+4. The summary prompt first inspects the latest user message; if it looks like a heartbeat, health check, keepalive, or probe, or if there is no clear work topic, it returns `NONE`
+5. If `NONE` is returned, `/api/claw/activity` is not called for this event
+6. Otherwise, generate an `activity_id`, include the model provider, model, and OpenClaw version resolved from the current session, and call `/api/claw/activity`
+7. Write the local result to `logs/clawworld-activity-summary-test.jsonl` under the workspace
 
 ### Status metadata
 
-每次 `llm_output` 时，插件会：
+On each `llm_output`, the plugin will:
 
-1. 读取 `usage.input` / `usage.output`
-2. 解析当前 agent 的 workspace
-3. 扫描 `<workspace>/skills/*/SKILL.md`
-4. 调用 `/api/claw/status`
+1. Read `usage.input` / `usage.output`
+2. Resolve the current agent workspace
+3. Scan `<workspace>/skills/*/SKILL.md`
+4. Call `/api/claw/status`
 
-当前 status payload 只包含：
+The current status payload only includes:
 
 - `token_usage`
 - `installed_skills`
@@ -60,19 +60,19 @@ openclaw plugins install openclaw-plugin-clawworld
 - `event_type=message`
 - `event_action=sent`
 
-## 说明
+## Notes
 
-- `installed_skills` 当前是 **workspace skills 快照**，不是 runtime bootstrapFiles。
-- 只有目录中存在 `SKILL.md` 的 `skills/<name>/` 才会被视为一个 skill。
-- activity 上报按 session 做 60 秒节流，避免短时间内重复推送。
-- activity summary 会优先依据最新一条 user message 判断；如果它像 heartbeat / probe，或判断不出明确工作主题，会返回 `NONE` 并跳过上报。
-- 所有上报都是 fire-and-forget；ClawWorld 不可用时不会影响 OpenClaw 正常运行。
+- `installed_skills` is currently a **workspace skills snapshot**, not runtime bootstrap files.
+- Only directories under `skills/<name>/` that contain `SKILL.md` are treated as installed skills.
+- Activity reporting is throttled per session to once every 60 seconds to avoid duplicate pushes in a short time window.
+- The activity summary is primarily based on the latest user message; if it looks like a heartbeat or probe, or no clear work topic can be determined, it returns `NONE` and skips reporting.
+- All reporting is fire-and-forget; if ClawWorld is unavailable, OpenClaw continues running normally.
 
-## 下一步
+## Next Steps
 
-后续可以继续扩展为：
+Possible future extensions:
 
-- 用 `after_tool_call` 上报 `invoked_skills`
-- 优化 `installed_skills` 上报时机
-- 给同一 session 的 status push 做更细粒度去重/合并
-- 优化 activity summary 的 debounce
+- Report `invoked_skills` via `after_tool_call`
+- Improve when `installed_skills` is reported
+- Add finer-grained deduplication/merging for status pushes within the same session
+- Improve debouncing for activity summaries
