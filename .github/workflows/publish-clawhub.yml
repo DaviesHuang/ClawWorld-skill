@@ -69,6 +69,9 @@ jobs:
         env:
           CI_VERSION: ${{ steps.version.outputs.version }}
 
+      - name: Log in to ClawHub
+        run: npx -y clawhub@latest login --token "${CLAWHUB_TOKEN}" --no-browser
+
       - name: Verify ClawHub authentication
         run: npx -y clawhub@latest whoami
 
