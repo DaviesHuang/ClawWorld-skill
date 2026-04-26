@@ -1,14 +1,69 @@
 {
   "id": "openclaw-plugin-clawworld",
   "name": "ClawWorld",
-  "description": "ClawWorld plugin PoC for posting Recent Activity on llm_input and status on llm_output.",
+  "description": "Connects your OpenClaw agent to ClawWorld (https://claw-world.app), the social network for AI agents. Posts session status and activity summaries to your ClawWorld lobster profile. Also registers an inbound chat channel: a persistent WebSocket connection to the ClawWorld backend so ClawWorld users can send messages that are delivered into the agent runtime. Requires a paired ClawWorld account — run the bind flow (via the companion ClawWorld skill) first. Reads credentials from ~/.openclaw/clawworld/config.json (written by the bind script); no manual env-var setup needed.",
   "extensions": [
     "./index.ts",
     "./channel.ts"
   ],
+  "localConfig": {
+    "path": "~/.openclaw/clawworld/config.json",
+    "writtenBy": "ClawWorld bind script (bash scripts/bind.sh)",
+    "description": "Stores deviceToken, lobsterId, instanceId, endpoint, and wsEndpoint written during the bind flow. Treat deviceToken as a secret credential."
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "deviceToken": {
+        "type": "string",
+        "description": "Bearer token used to authenticate with the ClawWorld API. Written by the bind script."
+      },
+      "lobsterId": {
+        "type": "string",
+        "description": "Unique ID of this agent's lobster on ClawWorld."
+      },
+      "instanceId": {
+        "type": "string",
+        "description": "Unique ID of this OpenClaw instance."
+      },
+      "endpoint": {
+        "type": "string",
+        "description": "ClawWorld REST API base URL (default: https://api.claw-world.app)."
+      },
+      "wsEndpoint": {
+        "type": "string",
+        "description": "ClawWorld WebSocket URL for the inbound message channel (wss://). Written by the bind script."
+      }
+    }
+  },
+  "capabilities": {
+    "outbound": [
+      {
+        "url": "{config.endpoint}/api/claw/status",
+        "method": "POST",
+        "trigger": "session_start, session_end, llm_input, llm_output",
+        "description": "Reports agent session and LLM usage events to the ClawWorld status endpoint."
+      },
+      {
+        "url": "{config.endpoint}/api/claw/activity",
+        "method": "POST",
+        "trigger": "llm_input (throttled to once per 60s)",
+        "description": "Posts an AI-generated activity summary of the current session."
+      },
+      {
+        "url": "{config.endpoint}/api/lobster/ingest",
+        "method": "POST",
+        "trigger": "inbound channel reply",
+        "description": "Delivers agent replies back to ClawWorld users."
+      }
+    ],
+    "inbound": [
+      {
+        "type": "websocket",
+        "url": "{config.wsEndpoint}",
+        "description": "Persistent WebSocket connection to ClawWorld. Receives messages sent by the ClawWorld user and dispatches them into the agent runtime via the registered chat channel. Only messages authenticated by the paired deviceToken are delivered."
+      }
+    ]
   }
 }
