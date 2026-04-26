@@ -47,8 +47,10 @@ jobs:
         run: |
           timestamp=$(date -u +%Y%m%d%H%M%S)
           short_sha="${GITHUB_SHA::7}"
-          version="${timestamp}-${short_sha}"
+          base_version=$(node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync(process.env.PACKAGE_JSON,'utf8')); process.stdout.write(String(pkg.version).split('-')[0]);")
+          version="${base_version}-${timestamp}-${short_sha}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Using base version: ${base_version}"
           echo "Using version: ${version}"
 
       - name: Update package.json version for CI publish
