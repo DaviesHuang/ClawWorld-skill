@@ -1,0 +1,89 @@
+name: Publish ClawWorld plugin to ClawHub
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'plugin/clawworld/**'
+      - '.github/workflows/publish-clawhub.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: publish-clawhub-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+      PACKAGE_DIR: plugin/clawworld
+      PACKAGE_JSON: plugin/clawworld/package.json
+      PACKAGE_NAME: openclaw-plugin-clawworld
+      PACKAGE_DISPLAY_NAME: ClawWorld
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate ClawHub token
+        run: |
+          if [ -z "${CLAWHUB_TOKEN}" ]; then
+            echo "CLAWHUB_TOKEN is not configured. Add it in GitHub repository secrets."
+            exit 1
+          fi
+
+      - name: Compute CI version
+        id: version
+        shell: bash
+        run: |
+          timestamp=$(date -u +%Y%m%d%H%M%S)
+          short_sha="${GITHUB_SHA::7}"
+          version="${timestamp}-${short_sha}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Using version: ${version}"
+
+      - name: Update package.json version for CI publish
+        run: |
+          node -e "const fs=require('fs'); const file=process.env.PACKAGE_JSON; const pkg=JSON.parse(fs.readFileSync(file,'utf8')); pkg.version=process.env.CI_VERSION; fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + '\n');"
+        env:
+          CI_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Show publish metadata
+        run: |
+          echo "package_dir=${PACKAGE_DIR}"
+          echo "package_name=${PACKAGE_NAME}"
+          echo "display_name=${PACKAGE_DISPLAY_NAME}"
+          echo "version=${CI_VERSION}"
+          echo "source_repo=github.com/${GITHUB_REPOSITORY}"
+          echo "source_commit=${GITHUB_SHA}"
+          echo "source_ref=${GITHUB_REF_NAME}"
+        env:
+          CI_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Verify ClawHub authentication
+        run: npx -y clawhub@latest whoami
+
+      - name: Publish plugin to ClawHub
+        run: |
+          npx -y clawhub@latest package publish "./${PACKAGE_DIR}" \
+            --family code-plugin \
+            --name "${PACKAGE_NAME}" \
+            --display-name "${PACKAGE_DISPLAY_NAME}" \
+            --version "${CI_VERSION}" \
+            --changelog "CI publish for ${GITHUB_SHA}" \
+            --tags latest \
+            --source-repo "github.com/${GITHUB_REPOSITORY}" \
+            --source-commit "${GITHUB_SHA}" \
+            --source-ref "${GITHUB_REF_NAME}" \
+            --source-path "${PACKAGE_DIR}"
+        env:
+          CI_VERSION: ${{ steps.version.outputs.version }}
