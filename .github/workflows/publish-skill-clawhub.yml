@@ -66,7 +66,7 @@ jobs:
             process.stdout.write(\`\${maj}.\${min}.\${patch+1}\`);
           " "$latest")
           echo "Next version: ${next}"
-          echo "version=${next}" >> "\$GITHUB_OUTPUT"
+          echo "version=${next}" >> "$GITHUB_OUTPUT"
 
       - name: Show publish metadata
         run: |
@@ -83,6 +83,7 @@ jobs:
       - name: Publish skill to ClawHub
         run: |
           npx -y clawhub@latest package publish "./${PACKAGE_DIR}" \
+            --family skill \
             --name "${PACKAGE_NAME}" \
             --display-name "${PACKAGE_DISPLAY_NAME}" \
             --version "${CI_VERSION}" \
