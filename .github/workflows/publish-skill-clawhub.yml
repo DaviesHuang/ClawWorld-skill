@@ -21,9 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_SKILL_TOKEN }}
-      PACKAGE_DIR: skill
-      PACKAGE_NAME: clawworld
-      PACKAGE_DISPLAY_NAME: ClawWorld
+      SKILL_DIR: skill
+      SKILL_SLUG: clawworld
+      SKILL_DISPLAY_NAME: ClawWorld
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -46,17 +46,14 @@ jobs:
       - name: Verify ClawHub authentication
         run: npx -y clawhub@latest whoami
 
-      - name: Show ClawHub package CLI help
-        run: npx -y clawhub@latest package --help || true
-
       - name: Compute next version
         id: version
         shell: bash
         run: |
-          latest=$(npx -y clawhub@latest package inspect "${PACKAGE_NAME}" --json | node -e "
+          latest=$(npx -y clawhub@latest inspect "${SKILL_SLUG}" --json 2>/dev/null | node -e "
             let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>{
               const o=JSON.parse(s);
-              const v = o.package && o.package.latestVersion;
+              const v = o.latestVersion && o.latestVersion.version;
               if (!v) { console.error('Could not find version in response:', JSON.stringify(o)); process.exit(1); }
               process.stdout.write(String(v).replace(/^v/,''));
             });")
@@ -70,11 +67,10 @@ jobs:
 
       - name: Show publish metadata
         run: |
-          echo "package_dir=${PACKAGE_DIR}"
-          echo "package_name=${PACKAGE_NAME}"
-          echo "display_name=${PACKAGE_DISPLAY_NAME}"
+          echo "skill_dir=${SKILL_DIR}"
+          echo "skill_slug=${SKILL_SLUG}"
+          echo "display_name=${SKILL_DISPLAY_NAME}"
           echo "version=${CI_VERSION}"
-          echo "source_repo=github.com/${GITHUB_REPOSITORY}"
           echo "source_commit=${GITHUB_SHA}"
           echo "source_ref=${GITHUB_REF_NAME}"
         env:
@@ -82,16 +78,11 @@ jobs:
 
       - name: Publish skill to ClawHub
         run: |
-          npx -y clawhub@latest package publish "./${PACKAGE_DIR}" \
-            --family skill \
-            --name "${PACKAGE_NAME}" \
-            --display-name "${PACKAGE_DISPLAY_NAME}" \
+          npx -y clawhub@latest publish "./${SKILL_DIR}" \
+            --slug "${SKILL_SLUG}" \
+            --name "${SKILL_DISPLAY_NAME}" \
             --version "${CI_VERSION}" \
             --changelog "CI publish for ${GITHUB_SHA}" \
-            --tags latest \
-            --source-repo "github.com/${GITHUB_REPOSITORY}" \
-            --source-commit "${GITHUB_SHA}" \
-            --source-ref "${GITHUB_REF_NAME}" \
-            --source-path "${PACKAGE_DIR}"
+            --tags latest
         env:
           CI_VERSION: ${{ steps.version.outputs.version }}
