@@ -53,10 +53,10 @@ jobs:
         id: version
         shell: bash
         run: |
-          latest=$(npx -y clawhub@latest package show "${PACKAGE_NAME}" --json | node -e "
+          latest=$(npx -y clawhub@latest package inspect "${PACKAGE_NAME}" --json | node -e "
             let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>{
               const o=JSON.parse(s);
-              const v = o.version || o.latestVersion || o.latest_version;
+              const v = o.package && o.package.latestVersion;
               if (!v) { console.error('Could not find version in response:', JSON.stringify(o)); process.exit(1); }
               process.stdout.write(String(v).replace(/^v/,''));
             });")
