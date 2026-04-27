@@ -1,0 +1,96 @@
+name: Publish ClawWorld skill to ClawHub
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'skill/**'
+      - '.github/workflows/publish-skill-clawhub.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: publish-skill-clawhub-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_SKILL_TOKEN }}
+      PACKAGE_DIR: skill
+      PACKAGE_NAME: clawworld
+      PACKAGE_DISPLAY_NAME: ClawWorld
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Validate ClawHub token
+        run: |
+          if [ -z "${CLAWHUB_TOKEN}" ]; then
+            echo "CLAWHUB_SKILL_TOKEN is not configured. Add it in GitHub repository secrets."
+            exit 1
+          fi
+
+      - name: Log in to ClawHub
+        run: npx -y clawhub@latest login --token "${CLAWHUB_TOKEN}" --no-browser
+
+      - name: Verify ClawHub authentication
+        run: npx -y clawhub@latest whoami
+
+      - name: Show ClawHub package CLI help
+        run: npx -y clawhub@latest package --help || true
+
+      - name: Compute next version
+        id: version
+        shell: bash
+        run: |
+          latest=$(npx -y clawhub@latest package show "${PACKAGE_NAME}" --json | node -e "
+            let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>{
+              const o=JSON.parse(s);
+              const v = o.version || o.latestVersion || o.latest_version;
+              if (!v) { console.error('Could not find version in response:', JSON.stringify(o)); process.exit(1); }
+              process.stdout.write(String(v).replace(/^v/,''));
+            });")
+          echo "Latest published version: ${latest}"
+          next=$(node -e "
+            const [maj,min,patch] = process.argv[1].split('.').map(Number);
+            process.stdout.write(\`\${maj}.\${min}.\${patch+1}\`);
+          " "$latest")
+          echo "Next version: ${next}"
+          echo "version=${next}" >> "\$GITHUB_OUTPUT"
+
+      - name: Show publish metadata
+        run: |
+          echo "package_dir=${PACKAGE_DIR}"
+          echo "package_name=${PACKAGE_NAME}"
+          echo "display_name=${PACKAGE_DISPLAY_NAME}"
+          echo "version=${CI_VERSION}"
+          echo "source_repo=github.com/${GITHUB_REPOSITORY}"
+          echo "source_commit=${GITHUB_SHA}"
+          echo "source_ref=${GITHUB_REF_NAME}"
+        env:
+          CI_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Publish skill to ClawHub
+        run: |
+          npx -y clawhub@latest package publish "./${PACKAGE_DIR}" \
+            --name "${PACKAGE_NAME}" \
+            --display-name "${PACKAGE_DISPLAY_NAME}" \
+            --version "${CI_VERSION}" \
+            --changelog "CI publish for ${GITHUB_SHA}" \
+            --tags latest \
+            --source-repo "github.com/${GITHUB_REPOSITORY}" \
+            --source-commit "${GITHUB_SHA}" \
+            --source-ref "${GITHUB_REF_NAME}" \
+            --source-path "${PACKAGE_DIR}"
+        env:
+          CI_VERSION: ${{ steps.version.outputs.version }}
