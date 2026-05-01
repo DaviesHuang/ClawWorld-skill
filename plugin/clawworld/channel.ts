@@ -79,7 +79,17 @@ async function runClawworldWebSocket(opts: {
 }): Promise<void> {
   const { cfg, abortSignal, onMessage } = opts;
 
-  await drainPending(cfg, onMessage);
+  // Dedup messageIds so drain and WebSocket don't double-dispatch the same message
+  const dispatched = new Set<string>();
+  const safeOnMessage = async (msg: ClawWorldInboundMessage) => {
+    if (dispatched.has(msg.messageId)) return;
+    dispatched.add(msg.messageId);
+    await onMessage(msg);
+  };
+
+  // Drain pending messages in parallel with WebSocket connect so the WS connection
+  // (which signals wsConnected=true to the frontend) isn't blocked on the HTTP round-trip.
+  drainPending(cfg, safeOnMessage).catch(() => {});
 
   return new Promise<void>(resolve => {
     let backoffMs = 1_000;
@@ -108,7 +118,7 @@ async function runClawworldWebSocket(opts: {
           msg = JSON.parse(event.data as string) as ClawWorldInboundMessage;
         } catch { return; }
         if (msg.type !== "message") return; // drop pong, ping errors, API Gateway error responses
-        await onMessage(msg);
+        await safeOnMessage(msg);
         await ackMessage(cfg, msg.messageId);
       };
 
