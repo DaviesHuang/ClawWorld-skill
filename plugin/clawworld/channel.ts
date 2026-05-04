@@ -76,6 +76,7 @@ async function runClawworldWebSocket(opts: {
   cfg: ClawWorldChannelConfig;
   abortSignal: AbortSignal;
   onMessage: (msg: ClawWorldInboundMessage) => Promise<void>;
+  onFirstConnect?: () => Promise<void>;
 }): Promise<void> {
   const { cfg, abortSignal, onMessage } = opts;
 
@@ -94,6 +95,7 @@ async function runClawworldWebSocket(opts: {
   return new Promise<void>(resolve => {
     let backoffMs = 1_000;
     let currentWs: WebSocket | null = null;
+    let hasGreeted = false; // fire onFirstConnect only on the first successful open
 
     const connect = () => {
       if (abortSignal.aborted) return;
@@ -110,6 +112,12 @@ async function runClawworldWebSocket(opts: {
         pingInterval = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
         }, 60_000); // heartbeat every 60s to outlast API Gateway's 2h idle timeout
+        if (!hasGreeted) {
+          hasGreeted = true;
+          opts.onFirstConnect?.().catch((e: any) => {
+            console.error("[clawworld-channel] onFirstConnect error:", e?.message ?? e);
+          });
+        }
       };
 
       ws.onmessage = async (event) => {
@@ -182,9 +190,47 @@ const _cwPluginDef = createChatChannelPlugin({
           await new Promise<void>(resolve => abortSignal.addEventListener("abort", resolve, { once: true }));
           return;
         }
+        const ingest = async (payload: any) => {
+          try {
+            const text = (payload as any)?.text ?? "";
+            if (!text) return;
+            const resp = await fetch(`${account.endpoint}/api/lobster/ingest`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${account.deviceToken}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ content: text }),
+            });
+            console.log("[clawworld-channel] ingest response:", resp.status);
+          } catch (e: any) {
+            console.error("[clawworld-channel] deliver error:", e?.message ?? e);
+          }
+        };
+
         await runClawworldWebSocket({
           cfg: account,
           abortSignal,
+          onFirstConnect: async () => {
+            for (let attempt = 0; attempt < 3; attempt++) {
+              try {
+                if (attempt > 0) await new Promise<void>(r => setTimeout(r, 5_000));
+                await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
+                  ctx: {
+                    Body: "[system] You have just started up and connected to your user's ClawWorld. Please send a short, friendly greeting to let them know you are online and ready to help.",
+                    From: `clawworld:${account.lobsterId}`,
+                    To: account.lobsterId,
+                    AccountId: accountId ?? "default",
+                  },
+                  cfg,
+                  dispatcherOptions: { deliver: ingest },
+                });
+                break;
+              } catch (e: any) {
+                console.warn(`[clawworld-channel] greeting attempt ${attempt + 1} failed:`, e?.message ?? e);
+              }
+            }
+          },
           onMessage: async (msg) => {
             console.log("[clawworld-channel] dispatching message to agent:", msg.messageId);
             await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
@@ -195,25 +241,7 @@ const _cwPluginDef = createChatChannelPlugin({
                 AccountId: accountId ?? "default",
               },
               cfg,
-              dispatcherOptions: {
-                deliver: async (payload: any) => {
-                  try {
-                    const text = (payload as any)?.text ?? "";
-                    if (!text) return;
-                    const resp = await fetch(`${account.endpoint}/api/lobster/ingest`, {
-                      method: "POST",
-                      headers: {
-                        Authorization: `Bearer ${account.deviceToken}`,
-                        "Content-Type": "application/json",
-                      },
-                      body: JSON.stringify({ content: text }),
-                    });
-                    console.log("[clawworld-channel] ingest response:", resp.status);
-                  } catch (e: any) {
-                    console.error("[clawworld-channel] deliver error:", e?.message ?? e);
-                  }
-                },
-              },
+              dispatcherOptions: { deliver: ingest },
             });
           },
         });
