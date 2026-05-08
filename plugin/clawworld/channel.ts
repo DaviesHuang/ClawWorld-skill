@@ -13,6 +13,10 @@ interface ClawWorldChannelConfig {
   instanceId:  string;
   endpoint:    string;
   wsEndpoint:  string;
+  // entrypoint.sh sets this to true in config.json on the very first deploy so
+  // the agent posts a single boot greeting. Subsequent restarts (auto-wakes)
+  // omit it, keeping the conversation thread free of restart spam.
+  initialGreeting?: boolean;
 }
 
 const CONFIG_FILE = path.join(os.homedir(), ".openclaw", "clawworld", "config.json");
@@ -31,6 +35,7 @@ async function readChannelConfig(): Promise<ClawWorldChannelConfig | null> {
       instanceId:  parsed.instanceId.trim(),
       endpoint:    parsed.endpoint.trim().replace(/\/+$/, ""),
       wsEndpoint:  (parsed.wsEndpoint ?? "").trim(),
+      initialGreeting: parsed.initialGreeting === true,
     };
   } catch {
     return null;
@@ -208,10 +213,16 @@ const _cwPluginDef = createChatChannelPlugin({
           }
         };
 
+        // Boot greeting fires only on the very first deploy. Subsequent auto-wakes
+        // (e.g. user re-engaged after inactivity-stop) launch the task without
+        // initialGreeting set in config, so the chat thread isn't spammed with
+        // restart notices. entrypoint.sh derives the flag from a task-definition
+        // variable and bakes it into config.json before the plugin loads.
+        const shouldGreet = account.initialGreeting === true;
         await runClawworldWebSocket({
           cfg: account,
           abortSignal,
-          onFirstConnect: async () => {
+          onFirstConnect: shouldGreet ? async () => {
             for (let attempt = 0; attempt < 3; attempt++) {
               try {
                 if (attempt > 0) await new Promise<void>(r => setTimeout(r, 5_000));
@@ -230,7 +241,7 @@ const _cwPluginDef = createChatChannelPlugin({
                 console.warn(`[clawworld-channel] greeting attempt ${attempt + 1} failed:`, e?.message ?? e);
               }
             }
-          },
+          } : undefined,
           onMessage: async (msg) => {
             console.log("[clawworld-channel] dispatching message to agent:", msg.messageId);
             await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
