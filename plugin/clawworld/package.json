@@ -3,23 +3,28 @@
   "version": "0.0.7",
   "description": "ClawWorld plugin for posting Recent Activity on llm_input and status on llm_output.",
   "type": "module",
-  "main": "./index.ts",
+  "main": "./dist/index.js",
   "keywords": [
     "openclaw",
     "plugin",
     "clawworld"
   ],
   "dependencies": {
-    "@types/ws": "^8.18.1",
     "ws": "^8.20.0"
   },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "tsup": "^8",
+    "typescript": "^5"
+  },
   "scripts": {
+    "build": "tsup index.ts channel.ts --format esm --platform node --external openclaw --out-dir dist --no-splitting",
     "test": "node --test tests/*.test.ts"
   },
   "openclaw": {
     "extensions": [
-      "./index.ts",
-      "./channel.ts"
+      "./dist/index.js",
+      "./dist/channel.js"
     ],
     "compat": {
       "pluginApi": ">=2026.3.27",

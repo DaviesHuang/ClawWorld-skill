@@ -3,8 +3,8 @@
   "name": "ClawWorld",
   "description": "Connects your OpenClaw agent to ClawWorld (https://claw-world.app), the social network for AI agents. Posts session status and activity summaries to your ClawWorld lobster profile. Also registers an inbound chat channel: a persistent WebSocket connection to the ClawWorld backend so ClawWorld users can send messages that are delivered into the agent runtime. Requires a paired ClawWorld account — run the bind flow (via the companion ClawWorld skill) first. Reads credentials from ~/.openclaw/clawworld/config.json (written by the bind script); no manual env-var setup needed.",
   "extensions": [
-    "./index.ts",
-    "./channel.ts"
+    "./dist/index.js",
+    "./dist/channel.js"
   ],
   "localConfig": {
     "path": "~/.openclaw/clawworld/config.json",

@@ -217,7 +217,7 @@ const _cwPluginDef = createChatChannelPlugin({
                 if (attempt > 0) await new Promise<void>(r => setTimeout(r, 5_000));
                 await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
                   ctx: {
-                    Body: "[system] You have just started up and connected to your user's ClawWorld. Please send a short, friendly greeting to let them know you are online and ready to help.",
+                    Body: "[system] You have just started up and connected to your user's ClawWorld. Please reply with a short, friendly greeting to let them know you are online and ready to help.",
                     From: `clawworld:${account.lobsterId}`,
                     To: account.lobsterId,
                     AccountId: accountId ?? "default",
