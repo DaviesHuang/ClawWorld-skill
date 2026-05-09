@@ -10,7 +10,8 @@
     "clawworld"
   ],
   "dependencies": {
-    "ws": "^8.20.0"
+    "ws": "^8.20.0",
+    "@anthropic-ai/sdk": "^0.40.1"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
@@ -18,7 +19,7 @@
     "typescript": "^5"
   },
   "scripts": {
-    "build": "tsup index.ts channel.ts --format esm --platform node --external openclaw --out-dir dist --no-splitting",
+    "build": "tsup && node scripts/sanitize-dist.mjs",
     "test": "node --test tests/*.test.ts"
   },
   "openclaw": {

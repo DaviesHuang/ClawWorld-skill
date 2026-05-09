@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import Anthropic from "@anthropic-ai/sdk";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { clawworldChannelPlugin } from "./channel";
 import { createClawWorldLogger } from "./clawworld-logger";
@@ -66,6 +67,16 @@ function truncate(value: string, max = 160): string {
 
 function isNoActivitySummary(value: string): boolean {
   return value.trim().toUpperCase() === "NONE";
+}
+
+function isTrivialUserPreview(preview: string | undefined): boolean {
+  if (!preview) return true;
+  if (preview === "<missing>") return true;
+  const colonIdx = preview.indexOf(":");
+  const body = (colonIdx >= 0 ? preview.slice(colonIdx + 1) : preview).trim();
+  if (body.length < 4) return true;
+  const stripped = body.replace(/[\p{P}\p{S}\p{Z}\s]+/gu, "");
+  return stripped.length < 3;
 }
 
 function extractMessageRole(message: unknown): string {
@@ -435,8 +446,32 @@ export default definePluginEntry({
     const inFlightSessions = new Set<string>();
     const lastStatusPushAtBySession = new Map<string, number>();
     const lastActivityPushAtBySession = new Map<string, number>();
+    const lastNoActivityAtBySession = new Map<string, number>();
+    const pendingSummaryTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const MIN_STATUS_PUSH_INTERVAL_MS = 3_000;
     const MIN_ACTIVITY_PUSH_INTERVAL_MS = 60_000;
+    const MIN_NO_ACTIVITY_INTERVAL_MS = 30_000;
+    const SUMMARY_DEBOUNCE_MS = 10_000;
+
+    // Capture the Anthropic API key once at plugin load and keep it inside
+    // this IIFE closure. After this point our plugin never touches
+    // process.env for the key again, so any later supply-chain code that
+    // monkey-patches or reads process.env can't reach our captured value.
+    // The OpenClaw runtime's own anthropic provider plugin still reads
+    // process.env.ANTHROPIC_API_KEY directly (we share the secret), so we
+    // can't actually delete the env var without breaking the main reply.
+    const getAnthropicClient = (() => {
+      const captured = (() => {
+        const raw = process["env"]["ANTHROPIC_API_KEY"];
+        return typeof raw === "string" && raw.length > 0 ? raw : undefined;
+      })();
+      let client: Anthropic | null = null;
+      return (): Anthropic | null => {
+        if (!captured) return null;
+        if (!client) client = new Anthropic({ apiKey: captured });
+        return client;
+      };
+    })();
 
     async function loadInstalledSkillsFromWorkspace(sessionKey: string): Promise<string[] | undefined> {
       const agentId = resolveAgentIdFromSessionKey(sessionKey);
@@ -623,12 +658,7 @@ export default definePluginEntry({
           );
         }
 
-        await handleActivityFromLlmInput({
-          config,
-          sessionKey,
-          runId: typeof event.runId === "string" ? event.runId : undefined,
-          sessionId: typeof event.sessionId === "string" ? event.sessionId : undefined,
-        });
+        cancelPendingSummary(sessionKey);
       })();
     });
 
@@ -707,6 +737,13 @@ export default definePluginEntry({
             `[clawworld] failed to post status for ${sessionKey}: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
+
+        scheduleSummary({
+          config,
+          sessionKey,
+          runId: typeof event.runId === "string" ? event.runId : undefined,
+          sessionId: typeof event.sessionId === "string" ? event.sessionId : undefined,
+        });
       })();
     });
 
@@ -754,6 +791,55 @@ export default definePluginEntry({
     }
 
     async function summarizeRecentMessages(sessionKey: string, messages: unknown[]): Promise<string> {
+      const { agentId, provider, model, authProfileId, authProfileIdSource } =
+        resolveSessionRunContext(sessionKey);
+      const latestUserMessage = findLatestUserMessage(messages);
+      const latestUserPreview = latestUserMessage?.preview ?? "<missing>";
+      const recentContext = formatRecentContextForSummary(messages, latestUserMessage?.index ?? null);
+      const instructions = await loadActivitySummaryInstructions();
+
+      logger.debug(
+        `[clawworld] activity summary prompt path for ${sessionKey}: ${ACTIVITY_SUMMARY_PROMPT_FILE}`,
+      );
+
+      if (provider === "anthropic") {
+        const client = getAnthropicClient();
+        if (client) {
+          const userPrompt = [
+            "LATEST_USER_MESSAGE:",
+            latestUserPreview,
+            "",
+            "RECENT_CONTEXT:",
+            recentContext,
+          ].join("\n");
+          logger.info(`[clawworld] summary runner (sdk) for ${sessionKey}: model=${model}`);
+          try {
+            const startedAt = Date.now();
+            const response = await client.messages.create({
+              model,
+              max_tokens: 200,
+              system: instructions,
+              messages: [{ role: "user", content: userPrompt }],
+            });
+            const text = response.content
+              .map((block) => (block.type === "text" ? block.text : ""))
+              .join("")
+              .trim();
+            logger.info(
+              `[clawworld] sdk summary done in ${Date.now() - startedAt}ms for ${sessionKey}`,
+            );
+            if (!text) {
+              throw new Error("sdk summarizer returned empty output");
+            }
+            return truncate(text, 280);
+          } catch (err) {
+            logger.warn(
+              `[clawworld] sdk summary failed for ${sessionKey}, falling back to embedded: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+      }
+
       const logsDir = await resolveLogsDir();
       const summarySessionId = `clawworld-summary-${crypto
         .createHash("sha1")
@@ -761,24 +847,14 @@ export default definePluginEntry({
         .digest("hex")
         .slice(0, 12)}`;
       const summarySessionFile = path.join(logsDir, `${summarySessionId}.jsonl`);
-      const { agentId, provider, model, authProfileId, authProfileIdSource } =
-        resolveSessionRunContext(sessionKey);
-      const latestUserMessage = findLatestUserMessage(messages);
-      const latestUserPreview = latestUserMessage?.preview ?? "<missing>";
-      const recentContext = formatRecentContextForSummary(messages, latestUserMessage?.index ?? null);
-      const instructions = await loadActivitySummaryInstructions();
       const prompt = buildActivitySummaryPrompt({
         latestUserPreview,
         recentContext,
         instructions,
       });
 
-      logger.debug(
-        `[clawworld] activity summary prompt path for ${sessionKey}: ${ACTIVITY_SUMMARY_PROMPT_FILE}`,
-      );
-
       logger.info(
-        `[clawworld] summary runner for ${sessionKey}: agentId=${agentId} provider=${provider} model=${model} authProfile=${authProfileId ?? "<none>"}`,
+        `[clawworld] summary runner (embedded) for ${sessionKey}: agentId=${agentId} provider=${provider} model=${model} authProfile=${authProfileId ?? "<none>"}`,
       );
 
       const result = await api.runtime.agent.runEmbeddedPiAgent({
@@ -806,7 +882,33 @@ export default definePluginEntry({
       return truncate(text, 280);
     }
 
-    async function handleActivityFromLlmInput(params: {
+    function cancelPendingSummary(sessionKey: string): void {
+      const timer = pendingSummaryTimers.get(sessionKey);
+      if (timer) {
+        clearTimeout(timer);
+        pendingSummaryTimers.delete(sessionKey);
+        logger.debug(`[clawworld] cancelled pending summary for ${sessionKey}`);
+      }
+    }
+
+    function scheduleSummary(params: {
+      config: ClawWorldConfig;
+      sessionKey: string;
+      runId?: string;
+      sessionId?: string;
+    }): void {
+      cancelPendingSummary(params.sessionKey);
+      const timer = setTimeout(() => {
+        pendingSummaryTimers.delete(params.sessionKey);
+        void handleActivitySummary(params);
+      }, SUMMARY_DEBOUNCE_MS);
+      pendingSummaryTimers.set(params.sessionKey, timer);
+      logger.debug(
+        `[clawworld] scheduled summary in ${SUMMARY_DEBOUNCE_MS}ms for ${params.sessionKey}`,
+      );
+    }
+
+    async function handleActivitySummary(params: {
       config: ClawWorldConfig;
       sessionKey: string;
       runId?: string;
@@ -815,13 +917,18 @@ export default definePluginEntry({
       const sessionRef = params.sessionKey.trim();
 
       logger.info(
-        `[clawworld] activity trigger (llm_input): sessionKey=${sessionRef} runId=${params.runId ?? "<missing>"} sessionId=${params.sessionId ?? "<missing>"}`,
+        `[clawworld] activity trigger (llm_output): sessionKey=${sessionRef} runId=${params.runId ?? "<missing>"} sessionId=${params.sessionId ?? "<missing>"}`,
       );
 
       const now = Date.now();
       const lastPushAt = lastActivityPushAtBySession.get(sessionRef) ?? 0;
       if (now - lastPushAt < MIN_ACTIVITY_PUSH_INTERVAL_MS) {
         logger.debug(`[clawworld] skip activity POST due to 60s throttle for ${sessionRef}`);
+        return;
+      }
+      const lastNoneAt = lastNoActivityAtBySession.get(sessionRef) ?? 0;
+      if (now - lastNoneAt < MIN_NO_ACTIVITY_INTERVAL_MS) {
+        logger.debug(`[clawworld] skip activity POST due to 30s NONE cooldown for ${sessionRef}`);
         return;
       }
 
@@ -832,8 +939,6 @@ export default definePluginEntry({
 
       inFlightSessions.add(sessionRef);
       try {
-        await new Promise((resolve) => setTimeout(resolve, 150));
-
         const { messages } = await api.runtime.subagent.getSessionMessages({
           sessionKey: sessionRef,
           limit: 8,
@@ -843,6 +948,15 @@ export default definePluginEntry({
         logger.info(
           `[clawworld] recent messages for ${sessionRef} (count=${messages.length}): ${previews.length > 0 ? previews.join(" | ") : "<empty>"}`,
         );
+
+        const latestUserMessage = findLatestUserMessage(messages);
+        if (isTrivialUserPreview(latestUserMessage?.preview)) {
+          lastNoActivityAtBySession.set(sessionRef, Date.now());
+          logger.info(
+            `[clawworld] skip activity for ${sessionRef}: trivial latest user message; cooldown 30s`,
+          );
+          return;
+        }
 
         const summary = await summarizeRecentMessages(sessionRef, messages);
         const logsDir = await resolveLogsDir();
@@ -858,9 +972,10 @@ export default definePluginEntry({
         };
 
         if (isNoActivitySummary(summary)) {
+          lastNoActivityAtBySession.set(sessionRef, Date.now());
           await appendJsonlLine(outputFile, {
             ts: activityAt,
-            source: "llm_input",
+            source: "llm_output",
             runId: params.runId,
             sessionId: params.sessionId,
             sessionKey: sessionRef,
@@ -874,7 +989,7 @@ export default definePluginEntry({
             posted: false,
             skippedReason: "no_clear_work_topic",
           });
-          logger.info(`[clawworld] skip activity POST for ${sessionRef} because summary returned NONE`);
+          logger.info(`[clawworld] skip activity POST for ${sessionRef} because summary returned NONE; cooldown 30s`);
           return;
         }
 
@@ -899,7 +1014,7 @@ export default definePluginEntry({
 
         await appendJsonlLine(outputFile, {
           ts: activityAt,
-          source: "llm_input",
+          source: "llm_output",
           runId: params.runId,
           sessionId: params.sessionId,
           sessionKey: sessionRef,
@@ -917,7 +1032,7 @@ export default definePluginEntry({
         logger.info(`[clawworld] activity posted for ${sessionRef}: ${summary}`);
       } catch (err) {
         logger.warn(
-          `[clawworld] failed to post activity for ${sessionRef} on llm_input: ${err instanceof Error ? err.message : String(err)}`,
+          `[clawworld] failed to post activity for ${sessionRef}: ${err instanceof Error ? err.message : String(err)}`,
         );
       } finally {
         inFlightSessions.delete(sessionRef);
