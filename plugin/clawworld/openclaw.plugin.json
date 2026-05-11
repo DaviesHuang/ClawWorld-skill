@@ -56,6 +56,12 @@
         "method": "POST",
         "trigger": "inbound channel reply",
         "description": "Delivers agent replies back to ClawWorld users."
+      },
+      {
+        "url": "https://api.deepseek.com/chat/completions",
+        "method": "POST",
+        "trigger": "30s after final llm_output (debounced; cancelled on next user message)",
+        "description": "Generates the activity summary text using DeepSeek so it does not consume the agent's primary LLM quota. Requires DEEPSEEK_API_KEY env var; if absent the summary step is skipped."
       }
     ],
     "inbound": [

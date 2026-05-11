@@ -38,19 +38,3 @@ export async function loadActivitySummaryInstructions(params?: {
     return DEFAULT_ACTIVITY_SUMMARY_INSTRUCTIONS;
   }
 }
-
-export function buildActivitySummaryPrompt(params: {
-  latestUserPreview: string;
-  recentContext: string;
-  instructions: string;
-}): string {
-  return [
-    'LATEST_USER_MESSAGE:',
-    params.latestUserPreview,
-    '',
-    'RECENT_CONTEXT:',
-    params.recentContext,
-    '',
-    params.instructions,
-  ].join('\n');
-}

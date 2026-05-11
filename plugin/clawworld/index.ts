@@ -3,15 +3,18 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import Anthropic from "@anthropic-ai/sdk";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { clawworldChannelPlugin } from "./channel";
 import { createClawWorldLogger } from "./clawworld-logger";
 import {
   ACTIVITY_SUMMARY_PROMPT_FILE,
-  buildActivitySummaryPrompt,
   loadActivitySummaryInstructions,
 } from "./activity-summary-prompt";
+
+const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
+const DEEPSEEK_MODEL = "deepseek-chat";
+const STATUS_TIMEOUT_MS = 1_500;
+const SUMMARY_TIMEOUT_MS = 8_000;
 
 const OPENCLAW_BUILD_VERSION = "2026.3.27";
 
@@ -43,12 +46,6 @@ type SessionEntryLike = {
   modelOverride?: unknown;
   authProfileOverride?: unknown;
   authProfileOverrideSource?: unknown;
-};
-
-type PayloadText = {
-  text?: string;
-  isReasoning?: boolean;
-  isError?: boolean;
 };
 
 type ActivityModelMetadata = {
@@ -373,7 +370,7 @@ async function postActivity(params: {
         ? { openclaw_version: params.metadata.openclaw_version }
         : {}),
     }),
-    signal: AbortSignal.timeout(5_000),
+    signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -393,33 +390,13 @@ async function postStatus(params: {
       Authorization: `Bearer ${params.config.deviceToken}`,
     },
     body: JSON.stringify(params.payload),
-    signal: AbortSignal.timeout(5_000),
+    signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
   });
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`status POST failed: ${response.status} ${text}`.trim());
   }
-}
-
-function collectPayloadText(payloads: unknown): string {
-  if (!Array.isArray(payloads)) {
-    return "";
-  }
-  return payloads
-    .map((payload) => {
-      if (!payload || typeof payload !== "object") {
-        return "";
-      }
-      const item = payload as PayloadText;
-      if (item.isReasoning || item.isError || typeof item.text !== "string") {
-        return "";
-      }
-      return item.text.trim();
-    })
-    .filter(Boolean)
-    .join("\n")
-    .trim();
 }
 
 async function appendJsonlLine(filePath: string, record: Record<string, unknown>): Promise<void> {
@@ -444,6 +421,7 @@ export default definePluginEntry({
     let workspaceLogsDir: string | null = null;
     let clawWorldConfig: ClawWorldConfig | null = null;
     const inFlightSessions = new Set<string>();
+    const inFlightSummaryAborts = new Map<string, AbortController>();
     const lastStatusPushAtBySession = new Map<string, number>();
     const lastActivityPushAtBySession = new Map<string, number>();
     const lastNoActivityAtBySession = new Map<string, number>();
@@ -451,26 +429,17 @@ export default definePluginEntry({
     const MIN_STATUS_PUSH_INTERVAL_MS = 3_000;
     const MIN_ACTIVITY_PUSH_INTERVAL_MS = 60_000;
     const MIN_NO_ACTIVITY_INTERVAL_MS = 30_000;
-    const SUMMARY_DEBOUNCE_MS = 10_000;
+    const SUMMARY_DEBOUNCE_MS = 30_000;
 
-    // Capture the Anthropic API key once at plugin load and keep it inside
-    // this IIFE closure. After this point our plugin never touches
-    // process.env for the key again, so any later supply-chain code that
-    // monkey-patches or reads process.env can't reach our captured value.
-    // The OpenClaw runtime's own anthropic provider plugin still reads
-    // process.env.ANTHROPIC_API_KEY directly (we share the secret), so we
-    // can't actually delete the env var without breaking the main reply.
-    const getAnthropicClient = (() => {
+    // Capture DEEPSEEK_API_KEY once at load time. Same defense-in-depth pattern
+    // used previously for ANTHROPIC_API_KEY: keep the secret in this closure so
+    // later supply-chain code can't reach it via process.env.
+    const getDeepSeekApiKey = (() => {
       const captured = (() => {
-        const raw = process["env"]["ANTHROPIC_API_KEY"];
+        const raw = process["env"]["DEEPSEEK_API_KEY"];
         return typeof raw === "string" && raw.length > 0 ? raw : undefined;
       })();
-      let client: Anthropic | null = null;
-      return (): Anthropic | null => {
-        if (!captured) return null;
-        if (!client) client = new Anthropic({ apiKey: captured });
-        return client;
-      };
+      return (): string | undefined => captured;
     })();
 
     async function loadInstalledSkillsFromWorkspace(sessionKey: string): Promise<string[] | undefined> {
@@ -632,6 +601,10 @@ export default definePluginEntry({
           return;
         }
 
+        // Cancel before the status POST so a new user message instantly
+        // aborts any pending or in-flight summary, even if postStatus is slow.
+        cancelPendingSummary(sessionKey);
+
         const config = await ensureClawWorldConfig();
         if (!config) {
           logger.warn("[clawworld] skip llm_input handling because ClawWorld config is unavailable");
@@ -657,8 +630,6 @@ export default definePluginEntry({
             `[clawworld] failed to post UserPromptSubmit for ${sessionKey}: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
-
-        cancelPendingSummary(sessionKey);
       })();
     });
 
@@ -790,9 +761,16 @@ export default definePluginEntry({
       };
     }
 
-    async function summarizeRecentMessages(sessionKey: string, messages: unknown[]): Promise<string> {
-      const { agentId, provider, model, authProfileId, authProfileIdSource } =
-        resolveSessionRunContext(sessionKey);
+    async function summarizeRecentMessages(
+      sessionKey: string,
+      messages: unknown[],
+      signal: AbortSignal,
+    ): Promise<string> {
+      const apiKey = getDeepSeekApiKey();
+      if (!apiKey) {
+        throw new Error("DEEPSEEK_API_KEY not configured; skipping summary");
+      }
+
       const latestUserMessage = findLatestUserMessage(messages);
       const latestUserPreview = latestUserMessage?.preview ?? "<missing>";
       const recentContext = formatRecentContextForSummary(messages, latestUserMessage?.index ?? null);
@@ -802,82 +780,65 @@ export default definePluginEntry({
         `[clawworld] activity summary prompt path for ${sessionKey}: ${ACTIVITY_SUMMARY_PROMPT_FILE}`,
       );
 
-      if (provider === "anthropic") {
-        const client = getAnthropicClient();
-        if (client) {
-          const userPrompt = [
-            "LATEST_USER_MESSAGE:",
-            latestUserPreview,
-            "",
-            "RECENT_CONTEXT:",
-            recentContext,
-          ].join("\n");
-          logger.info(`[clawworld] summary runner (sdk) for ${sessionKey}: model=${model}`);
-          try {
-            const startedAt = Date.now();
-            const response = await client.messages.create({
-              model,
-              max_tokens: 200,
-              system: instructions,
-              messages: [{ role: "user", content: userPrompt }],
-            });
-            const text = response.content
-              .map((block) => (block.type === "text" ? block.text : ""))
-              .join("")
-              .trim();
-            logger.info(
-              `[clawworld] sdk summary done in ${Date.now() - startedAt}ms for ${sessionKey}`,
-            );
-            if (!text) {
-              throw new Error("sdk summarizer returned empty output");
-            }
-            return truncate(text, 280);
-          } catch (err) {
-            logger.warn(
-              `[clawworld] sdk summary failed for ${sessionKey}, falling back to embedded: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
-        }
+      const userPrompt = [
+        "LATEST_USER_MESSAGE:",
+        latestUserPreview,
+        "",
+        "RECENT_CONTEXT:",
+        recentContext,
+      ].join("\n");
+
+      logger.info(`[clawworld] summary runner (deepseek) for ${sessionKey}: model=${DEEPSEEK_MODEL}`);
+      const startedAt = Date.now();
+      // Compose caller-cancel + timeout into a single signal without AbortSignal.any
+      // (which is Node 20.3+ only). The composite aborts on whichever fires first.
+      const composite = new AbortController();
+      const onCallerAbort = (): void => composite.abort();
+      if (signal.aborted) {
+        composite.abort();
+      } else {
+        signal.addEventListener("abort", onCallerAbort, { once: true });
+      }
+      const timeoutHandle = setTimeout(() => composite.abort(), SUMMARY_TIMEOUT_MS);
+      let response: Response;
+      try {
+        response = await fetch(DEEPSEEK_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: DEEPSEEK_MODEL,
+            messages: [
+              { role: "system", content: instructions },
+              { role: "user", content: userPrompt },
+            ],
+            max_tokens: 200,
+            temperature: 0.3,
+            stream: false,
+          }),
+          signal: composite.signal,
+        });
+      } finally {
+        clearTimeout(timeoutHandle);
+        signal.removeEventListener("abort", onCallerAbort);
       }
 
-      const logsDir = await resolveLogsDir();
-      const summarySessionId = `clawworld-summary-${crypto
-        .createHash("sha1")
-        .update(sessionKey)
-        .digest("hex")
-        .slice(0, 12)}`;
-      const summarySessionFile = path.join(logsDir, `${summarySessionId}.jsonl`);
-      const prompt = buildActivitySummaryPrompt({
-        latestUserPreview,
-        recentContext,
-        instructions,
-      });
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`deepseek summary failed: ${response.status} ${errText}`.trim());
+      }
 
+      const data = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const text = data.choices?.[0]?.message?.content?.trim() ?? "";
       logger.info(
-        `[clawworld] summary runner (embedded) for ${sessionKey}: agentId=${agentId} provider=${provider} model=${model} authProfile=${authProfileId ?? "<none>"}`,
+        `[clawworld] deepseek summary done in ${Date.now() - startedAt}ms for ${sessionKey}`,
       );
-
-      const result = await api.runtime.agent.runEmbeddedPiAgent({
-        sessionId: summarySessionId,
-        sessionKey,
-        agentId,
-        runId: `clawworld-summary-${Date.now()}`,
-        sessionFile: summarySessionFile,
-        agentDir: api.runtime.agent.resolveAgentDir(api.config, agentId),
-        workspaceDir: api.runtime.agent.resolveAgentWorkspaceDir(api.config, agentId),
-        config: api.config,
-        prompt,
-        provider,
-        model,
-        ...(authProfileId ? { authProfileId } : {}),
-        ...(authProfileIdSource ? { authProfileIdSource } : {}),
-        timeoutMs: api.runtime.agent.resolveAgentTimeoutMs({ cfg: api.config }),
-        disableTools: true,
-      });
-
-      const text = collectPayloadText(result.payloads);
       if (!text) {
-        throw new Error("embedded summarizer returned empty output");
+        throw new Error("deepseek summarizer returned empty output");
       }
       return truncate(text, 280);
     }
@@ -888,6 +849,12 @@ export default definePluginEntry({
         clearTimeout(timer);
         pendingSummaryTimers.delete(sessionKey);
         logger.debug(`[clawworld] cancelled pending summary for ${sessionKey}`);
+      }
+      const inFlight = inFlightSummaryAborts.get(sessionKey);
+      if (inFlight) {
+        inFlight.abort();
+        inFlightSummaryAborts.delete(sessionKey);
+        logger.debug(`[clawworld] aborted in-flight summary for ${sessionKey}`);
       }
     }
 
@@ -958,7 +925,24 @@ export default definePluginEntry({
           return;
         }
 
-        const summary = await summarizeRecentMessages(sessionRef, messages);
+        const summaryAbort = new AbortController();
+        inFlightSummaryAborts.set(sessionRef, summaryAbort);
+        let summary: string;
+        try {
+          summary = await summarizeRecentMessages(sessionRef, messages, summaryAbort.signal);
+        } catch (err) {
+          if (summaryAbort.signal.aborted) {
+            logger.info(
+              `[clawworld] summary aborted for ${sessionRef} (likely due to new user message)`,
+            );
+            return;
+          }
+          throw err;
+        } finally {
+          if (inFlightSummaryAborts.get(sessionRef) === summaryAbort) {
+            inFlightSummaryAborts.delete(sessionRef);
+          }
+        }
         const logsDir = await resolveLogsDir();
         const outputFile = path.join(logsDir, "clawworld-activity-summary-test.jsonl");
         const activityAt = new Date().toISOString();

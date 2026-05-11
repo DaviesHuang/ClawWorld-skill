@@ -6,7 +6,6 @@ import path from 'node:path';
 
 import {
   DEFAULT_ACTIVITY_SUMMARY_INSTRUCTIONS,
-  buildActivitySummaryPrompt,
   loadActivitySummaryInstructions,
 } from '../activity-summary-prompt.ts';
 
@@ -31,14 +30,4 @@ test('falls back to default activity summary instructions when prompt file is mi
   const instructions = await loadActivitySummaryInstructions({ homeDir: tempHome });
 
   assert.equal(instructions, DEFAULT_ACTIVITY_SUMMARY_INSTRUCTIONS);
-});
-
-test('builds summary prompt by prepending runtime context before the prompt file contents', () => {
-  const prompt = buildActivitySummaryPrompt({
-    latestUserPreview: 'user: fix the login issue',
-    recentContext: '1. user: earlier context',
-    instructions: 'Return NONE for keepalives. Otherwise write one short privacy-safe sentence.',
-  });
-
-  assert.match(prompt, /^LATEST_USER_MESSAGE:\nuser: fix the login issue\n\nRECENT_CONTEXT:\n1\. user: earlier context\n\nReturn NONE for keepalives\./);
 });

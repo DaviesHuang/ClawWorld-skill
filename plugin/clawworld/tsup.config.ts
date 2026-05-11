@@ -7,5 +7,5 @@ export default defineConfig({
   outDir: "dist",
   splitting: false,
   external: ["openclaw"],
-  noExternal: ["ws", "@anthropic-ai/sdk"],
+  noExternal: ["ws"],
 });

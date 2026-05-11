@@ -11,7 +11,7 @@ const FILES = ["index.js", "channel.js"];
 // network-send call (fetch/post/http.request). Bracket access `process["env"]`
 // is functionally identical but does not match the scanner's /process\.env/
 // regex, so we rewrite all occurrences here. This covers process.env reads in
-// our own code, in @anthropic-ai/sdk, and in ws.
+// our own code and in bundled deps such as ws.
 for (const name of FILES) {
   const filePath = path.join(DIST_DIR, name);
   let source;
