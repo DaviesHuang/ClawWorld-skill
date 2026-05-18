@@ -11,7 +11,16 @@ import {
   loadActivitySummaryInstructions,
 } from "./activity-summary-prompt";
 
-const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
+// In ClawWorld cloud, the agent has no real DeepSeek key — the device token is
+// what entrypoint.sh exports as DEEPSEEK_API_KEY, and OpenClaw's primary model
+// calls reach DeepSeek through CLAWWORLD_PROXY_URL (which unwraps the device
+// token via SSM and forwards). Route the activity-summary call through the
+// same proxy so it succeeds with the device token; fall back to the public
+// endpoint for self-hosted setups where the user supplies a real key.
+const DEEPSEEK_ENDPOINT = (() => {
+  const proxy = process.env.CLAWWORLD_PROXY_URL?.replace(/\/+$/, "");
+  return proxy ? `${proxy}/v1/chat/completions` : "https://api.deepseek.com/chat/completions";
+})();
 const DEEPSEEK_MODEL = "deepseek-chat";
 const STATUS_TIMEOUT_MS = 1_500;
 const SUMMARY_TIMEOUT_MS = 8_000;
