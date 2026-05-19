@@ -42,6 +42,29 @@ async function readChannelConfig(): Promise<ClawWorldChannelConfig | null> {
   }
 }
 
+// ── Boot greeting variants ────────────────────────────────────────────────────
+// Each cold start (initialGreeting=true in config) picks one of these so the
+// agent doesn't open with the exact same line every time the container wakes.
+// No timezone-aware variants: the container runs in UTC and we don't ship the
+// user's local timezone, so randomized stylistic variants are the cheapest
+// path to variety. Returns the directive body to pass to the agent, wrapped
+// in [system] + "reply with…" so it triggers action=reply (action=send would
+// require a target and error out per upstream fix 1470586).
+function pickGreetingPrompt(): string {
+  const variants = [
+    "an upbeat, energetic hello — under 20 words, one emoji allowed.",
+    "a thoughtful, slightly contemplative note that you're back online — under 20 words.",
+    "a self-deprecating joke about cold start latency to say you're here — under 20 words.",
+    "a quick check-in saying you're online, then ask what they're up to — under 20 words.",
+    "a curious, friendly hello that wonders what they're working on right now — under 20 words.",
+    "a casual, low-key hello — under 20 words, no fanfare.",
+    "a warm, friend-who's-been-away-for-a-while reappearance — under 20 words.",
+    "a brief, matter-of-fact note that you're here and ready to chat — under 20 words.",
+  ];
+  const directive = variants[Math.floor(Math.random() * variants.length)];
+  return `[system] You have just started up and connected to your user's ClawWorld. Please reply (action=reply) with a short, friendly greeting in this style: ${directive}`;
+}
+
 // ── WebSocket inbound ─────────────────────────────────────────────────────────
 
 interface ClawWorldInboundMessage {
@@ -228,7 +251,7 @@ const _cwPluginDef = createChatChannelPlugin({
                 if (attempt > 0) await new Promise<void>(r => setTimeout(r, 5_000));
                 await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
                   ctx: {
-                    Body: "[system] You have just started up and connected to your user's ClawWorld. Please reply with a short, friendly greeting to let them know you are online and ready to help.",
+                    Body: pickGreetingPrompt(),
                     From: `clawworld:${account.lobsterId}`,
                     To: account.lobsterId,
                     AccountId: accountId ?? "default",
