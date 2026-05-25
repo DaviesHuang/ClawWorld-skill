@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -13,15 +14,45 @@ import {
 
 // In ClawWorld cloud, the agent has no real DeepSeek key — the device token is
 // what entrypoint.sh exports as DEEPSEEK_API_KEY, and OpenClaw's primary model
-// calls reach DeepSeek through CLAWWORLD_PROXY_URL (which unwraps the device
-// token via SSM and forwards). Route the activity-summary call through the
-// same proxy so it succeeds with the device token; fall back to the public
-// endpoint for self-hosted setups where the user supplies a real key.
+// calls reach DeepSeek through the metering proxy Lambda (which unwraps the
+// device token via SSM and forwards with the real key). Route the
+// activity-summary call through the same proxy so it succeeds with the device
+// token; fall back to the public endpoint for self-hosted setups where the
+// user supplies a real key.
+//
+// The proxy URL is read from clawworld/config.json rather than
+// process.env.CLAWWORLD_PROXY_URL because OpenClaw's plugin runtime does not
+// pass arbitrary container env vars through to plugin processes. The env var
+// remains a final fallback for self-hosted/debug setups that haven't
+// populated the config yet.
 const DEEPSEEK_ENDPOINT = (() => {
-  const proxy = process.env.CLAWWORLD_PROXY_URL?.replace(/\/+$/, "");
-  return proxy ? `${proxy}/v1/chat/completions` : "https://api.deepseek.com/chat/completions";
+  let proxy: string | undefined;
+  let configState = "missing";
+  try {
+    const configPath = path.join(os.homedir(), ".openclaw", "clawworld", "config.json");
+    const raw = readFileSync(configPath, "utf8");
+    const cfg = JSON.parse(raw) as { proxyUrl?: string };
+    configState = `proxyUrl=${JSON.stringify(cfg.proxyUrl)}`;
+    if (typeof cfg.proxyUrl === "string" && cfg.proxyUrl) {
+      proxy = cfg.proxyUrl;
+    }
+  } catch (err) {
+    configState = `read-error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  const envHasProxy = !!process.env.CLAWWORLD_PROXY_URL;
+  if (!proxy) {
+    proxy = process.env.CLAWWORLD_PROXY_URL;
+  }
+  proxy = proxy?.replace(/\/+$/, "");
+  const endpoint = proxy ? `${proxy}/v1/chat/completions` : "https://api.deepseek.com/chat/completions";
+  // One-shot startup diagnostic so we can see this decision in CloudWatch.
+  // The activity-summary 401s gave us no info about which path was taken.
+  process.stderr.write(
+    `[clawworld] DEEPSEEK_ENDPOINT@load: ${endpoint} (config: ${configState}, env_has_proxy: ${envHasProxy}, home: ${os.homedir()})\n`,
+  );
+  return endpoint;
 })();
-const DEEPSEEK_MODEL = "deepseek-chat";
+const DEEPSEEK_MODEL = "deepseek-v4-flash";
 const STATUS_TIMEOUT_MS = 1_500;
 const SUMMARY_TIMEOUT_MS = 8_000;
 
@@ -32,6 +63,7 @@ type ClawWorldConfig = {
   lobsterId: string;
   instanceId: string;
   endpoint: string;
+  proxyUrl?: string;
 };
 
 type StatusPayload = {
