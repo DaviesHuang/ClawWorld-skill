@@ -55,7 +55,19 @@
         "url": "{config.endpoint}/api/lobster/ingest",
         "method": "POST",
         "trigger": "inbound channel reply",
-        "description": "Delivers agent replies back to ClawWorld users."
+        "description": "Delivers agent replies back to ClawWorld users. Supports optional attachments array for outbound file transfer."
+      },
+      {
+        "url": "{config.endpoint}/api/lobster/files/download-url",
+        "method": "POST",
+        "trigger": "inbound attachment download",
+        "description": "Exchanges a fileId for a presigned S3 download URL. Called by the plugin when an inbound WS message carries attachments."
+      },
+      {
+        "url": "{config.endpoint}/api/lobster/files/upload-url",
+        "method": "POST",
+        "trigger": "outbound attachment upload",
+        "description": "Exchanges file metadata (name, mime, size) for a presigned S3 upload URL + fileId. Called by the plugin to upload agent-produced files from ~/.openclaw/out/."
       },
       {
         "url": "https://api.deepseek.com/chat/completions",

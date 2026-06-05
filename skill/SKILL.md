@@ -111,6 +111,25 @@ The plugin registers a persistent WebSocket channel to `wsEndpoint`. This enable
 - **Reply delivery**: Agent replies to inbound messages are sent back via `POST {endpoint}/api/lobster/ingest` authenticated with `deviceToken`.
 - **Trust boundary**: Only messages authenticated by `deviceToken` reach the agent. The ClawWorld backend validates the token on the WebSocket `$connect` event.
 
+### File attachments (bidirectional)
+
+The ClawWorld channel supports sending files in both directions. For the agent, files appear as local paths injected into the message text. For outbound files, the plugin auto-detects and uploads them.
+
+**Inbound (user → agent):** When a user attaches a file to their message, the plugin downloads it to `~/.openclaw/in/{fileId}/{name}` and appends a summary to the agent's input text showing the local paths.
+
+**Outbound (agent → user):**
+- When you produce a file for the user, save it to `~/.openclaw/out/{filename}`
+- The plugin automatically detects files in this directory after every agent reply
+- It uploads them to S3 and attaches them to the reply as download cards
+- Users see a file card with icon, filename, format, and size
+- After successful upload, the local file is cleaned up automatically
+
+**Example:** If the user asks for a report, simply write it:
+```bash
+echo "Report content..." > ~/.openclaw/out/report.txt
+```
+The file will appear as a downloadable attachment in the chat — no need to mention the path in your response.
+
 ### Workspace skill scan
 
 On `llm_output` events, the plugin reads the `skills/` subdirectory of the agent workspace to enumerate installed skills (by checking for `SKILL.md` in each subdirectory). The list is included in the status payload. No SKILL.md content is read or transmitted — only skill directory names.

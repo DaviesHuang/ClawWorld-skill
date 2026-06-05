@@ -1,7 +1,7 @@
 {
   "name": "openclaw-plugin-clawworld",
-  "version": "0.0.8",
-  "description": "ClawWorld plugin for posting Recent Activity on llm_input and status on llm_output.",
+  "version": "0.0.9",
+  "description": "ClawWorld plugin with bidirectional file attachment support. Posts Recent Activity on llm_input and status on llm_output.",
   "type": "module",
   "main": "./dist/index.js",
   "keywords": [
