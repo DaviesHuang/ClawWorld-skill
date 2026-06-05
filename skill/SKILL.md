@@ -118,17 +118,20 @@ The ClawWorld channel supports sending files in both directions. For the agent, 
 **Inbound (user → agent):** When a user attaches a file to their message, the plugin downloads it to `~/.openclaw/in/{fileId}/{name}` and appends a summary to the agent's input text showing the local paths.
 
 **Outbound (agent → user):**
-- When you produce a file for the user, save it to `~/.openclaw/out/{filename}`
-- The plugin automatically detects files in this directory after every agent reply
-- It uploads them to S3 and attaches them to the reply as download cards
-- Users see a file card with icon, filename, format, and size
-- After successful upload, the local file is cleaned up automatically
+- CRITICAL: When you produce a file for the user, you MUST save it to `~/.openclaw/out/{filename}` — do NOT save to `workspace/`, `data/`, `/tmp/`, or any other directory.
+- ONLY files placed under `~/.openclaw/out/` are automatically detected and sent to the user.
+- The plugin scans `~/.openclaw/out/` after every agent reply, uploads any files found to S3, and attaches them to your reply as inline images (for PNG/JPEG/GIF/SVG/WebP/BMP) or download cards (all other types).
+- The user sees the image/card directly in chat — they do not need to click a file path.
+- After successful upload, the local file is cleaned up automatically.
+- IMPORTANT: Do NOT tell the user "open this file at /root/.openclaw/workspace/..." — they cannot access container paths. Always use `~/.openclaw/out/`.
 
-**Example:** If the user asks for a report, simply write it:
+**Example:** If the user asks for a report or an image, write it to the out/ directory:
 ```bash
 echo "Report content..." > ~/.openclaw/out/report.txt
+# Or generate an image:
+convert ... ~/.openclaw/out/chart.png
 ```
-The file will appear as a downloadable attachment in the chat — no need to mention the path in your response.
+The file will appear as an attachment in the chat automatically — do not mention the file path in your response, just tell the user what you made.
 
 ### Workspace skill scan
 
